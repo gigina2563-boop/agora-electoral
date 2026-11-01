@@ -1,0 +1,30 @@
+# Entornos y artefactos locales
+.venv/
+.venv-1/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
+
+# Secretos y configuración local
+.streamlit/secrets.toml
+.env
+.env.*
+
+# Base SQLite local: se reconstruye desde data/seed_resultados.csv
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+
+# Logs y descargas
+*.log
+descargas/
+datos/*
+!datos/.gitkeep
+
+# Archivos temporales de pruebas
+/tmp/
+.pytest_cache/

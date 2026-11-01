@@ -1,0 +1,689 @@
+:root {
+    --agora-blue: #1d4ed8;
+    --agora-blue-600: #2563eb;
+    --agora-sky: #0284c7;
+    --agora-cyan: #0ea5e9;
+    --agora-deep: #1e3a8a;
+    --agora-ink: #0f172a;
+    --agora-text: #334155;
+    --agora-muted: #64748b;
+    --agora-line: #e2e8f0;
+    --agora-bg: #f8fafc;
+    --agora-soft: #eff6ff;
+    --agora-soft-2: #e0f2fe;
+    --agora-white: #ffffff;
+    --agora-radius: 12px;
+    --agora-shadow: 0 1px 2px rgba(15, 23, 42, 0.04),
+        0 8px 24px rgba(15, 23, 42, 0.04);
+}
+
+html,
+body,
+[class*="css"] {
+    font-family: "Inter", "Segoe UI", system-ui, -apple-system,
+        BlinkMacSystemFont, sans-serif;
+}
+
+.stApp {
+    background: var(--agora-bg);
+    color: var(--agora-text);
+}
+
+[data-testid="stHeader"] {
+    display: none;
+}
+
+#MainMenu,
+footer,
+[data-testid="stDecoration"],
+[data-testid="stAppDeployButton"] {
+    display: none !important;
+    visibility: hidden;
+}
+
+.block-container {
+    padding-top: 0 !important;
+    padding-bottom: 2rem;
+    max-width: 1480px;
+}
+
+h1,
+h2,
+h3 {
+    color: var(--agora-ink);
+    letter-spacing: -0.025em;
+    font-family: inherit;
+}
+
+h1 {
+    font-size: clamp(1.7rem, 2.7vw, 2.25rem);
+    line-height: 1.08;
+    font-weight: 800;
+}
+
+h2 {
+    font-size: clamp(1.2rem, 2vw, 1.5rem);
+    font-weight: 750;
+}
+
+h3 {
+    font-size: 1.05rem;
+    font-weight: 700;
+}
+
+a {
+    color: var(--agora-blue);
+}
+
+a:hover {
+    color: var(--agora-sky);
+}
+
+a:focus-visible,
+button:focus-visible,
+summary:focus-visible {
+    outline: 2px solid var(--agora-sky);
+    outline-offset: 2px;
+}
+
+/* Cabecera sticky: se eliminan las cajas intermedias de Streamlit para que
+   el elemento sticky tenga como bloque contenedor toda la página. */
+div[data-testid="stElementContainer"]:has(#agoraHeader),
+div.element-container:has(#agoraHeader),
+div[data-testid="stMarkdown"]:has(#agoraHeader),
+div[data-testid="stMarkdownContainer"]:has(#agoraHeader),
+div[data-testid="stMarkdown"]:has(#agoraHeader) > div {
+    display: contents !important;
+}
+
+iframe[height="1"],
+div[data-testid="stElementContainer"]:has([data-testid="stIFrame"]) {
+    display: none !important;
+}
+
+.agora-sticky {
+    position: sticky;
+    top: 0;
+    z-index: 999;
+    width: 100%;
+    margin: 0;
+    background: var(--agora-white);
+    border-bottom: 1px solid var(--agora-line);
+    box-shadow: 0 1px 0 rgba(15, 23, 42, 0.02);
+}
+
+.agora-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 92px;
+    max-width: 1480px;
+    margin: 0 auto;
+    padding: 11px clamp(16px, 2.4vw, 30px);
+    transition: min-height 180ms ease, padding 180ms ease;
+}
+
+.agora-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+}
+
+.agora-logo {
+    display: grid;
+    place-items: center;
+    flex: 0 0 auto;
+    width: 70px;
+    height: 70px;
+    padding: 0;
+    background: var(--agora-soft);
+    border: 1px solid #dbeafe;
+    border-radius: 15px;
+    transition: width 180ms ease, height 180ms ease;
+}
+
+.agora-logo svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.agora-titles {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    line-height: 1.08;
+}
+
+.agora-title {
+    color: var(--agora-ink);
+    font-size: 38px;
+    font-weight: 850;
+    letter-spacing: -0.045em;
+    white-space: nowrap;
+    transition: font-size 180ms ease;
+}
+
+.agora-title-tail {
+    color: var(--agora-blue);
+}
+
+.agora-tagline {
+    margin-top: 4px;
+    color: var(--agora-muted);
+    font-size: 16px;
+    font-weight: 600;
+    letter-spacing: 0.015em;
+    white-space: nowrap;
+    transition: opacity 160ms ease;
+}
+
+.agora-meta {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 7px;
+    flex-wrap: wrap;
+    transition: opacity 160ms ease;
+}
+
+.agora-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 5px 9px;
+    color: #475569;
+    background: #f8fafc;
+    border: 1px solid var(--agora-line);
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+}
+
+.agora-chip--accent {
+    color: var(--agora-deep);
+    background: var(--agora-soft);
+    border-color: #bfdbfe;
+}
+
+.agora-chip--ghost {
+    background: transparent;
+}
+
+#agoraHeader.is-compact .agora-bar {
+    min-height: 60px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+}
+
+#agoraHeader.is-compact .agora-logo {
+    width: 42px;
+    height: 42px;
+    padding: 0;
+    border-radius: 11px;
+}
+
+#agoraHeader.is-compact .agora-title {
+    font-size: 25px;
+}
+
+#agoraHeader.is-compact .agora-tagline,
+#agoraHeader.is-compact .agora-meta {
+    opacity: 0;
+    pointer-events: none;
+}
+
+/* Contenido */
+.agora-section-head {
+    padding: 2px 0 12px;
+}
+
+.agora-eyebrow {
+    display: inline-block;
+    color: var(--agora-sky);
+    font-size: 0.67rem;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    line-height: 1.3;
+    text-transform: uppercase;
+}
+
+.agora-section-head h1 {
+    margin: 0.24rem 0 0.22rem;
+}
+
+.agora-section-head p,
+.agora-hero p {
+    max-width: 82ch;
+    margin: 0;
+    color: var(--agora-muted);
+    font-size: 0.9rem;
+    line-height: 1.55;
+}
+
+.agora-hero {
+    margin: 0 0 1.1rem;
+    padding: clamp(18px, 3vw, 30px);
+    background: var(--agora-white);
+    border: 1px solid var(--agora-line);
+    border-left: 4px solid var(--agora-blue-600);
+    border-radius: 14px;
+    box-shadow: var(--agora-shadow);
+}
+
+.agora-hero h1 {
+    margin: 0.25rem 0 0.35rem;
+}
+
+.agora-hero p {
+    font-size: 0.96rem;
+}
+
+.agora-panorama {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin: 0.65rem 0 1rem;
+}
+
+.agora-panorama--stack {
+    grid-template-columns: 1fr;
+}
+
+.agora-panorama-item {
+    padding: 14px 16px;
+    background: var(--agora-white);
+    border: 1px solid var(--agora-line);
+    border-radius: var(--agora-radius);
+    box-shadow: var(--agora-shadow);
+}
+
+.agora-panorama-item span {
+    display: block;
+    color: var(--agora-muted);
+    font-size: 0.67rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.agora-panorama-item strong {
+    display: block;
+    margin-top: 0.28rem;
+    color: var(--agora-ink);
+    font-size: 0.98rem;
+    font-weight: 750;
+    line-height: 1.25;
+}
+
+.agora-panorama-item em {
+    display: block;
+    margin-top: 0.18rem;
+    color: var(--agora-blue);
+    font-size: 1.55rem;
+    font-style: normal;
+    font-weight: 850;
+    letter-spacing: -0.035em;
+}
+
+.agora-callout {
+    margin: 0.6rem 0 1rem;
+    padding: 12px 15px;
+    color: var(--agora-deep);
+    background: var(--agora-soft);
+    border-left: 3px solid var(--agora-blue-600);
+    border-radius: 8px;
+    font-size: 0.86rem;
+    line-height: 1.55;
+}
+
+.agora-callout strong {
+    color: var(--agora-deep);
+}
+
+.agora-onboard {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin: 0.75rem 0 1rem;
+}
+
+.agora-card {
+    padding: 17px 18px;
+    background: var(--agora-white);
+    border: 1px solid var(--agora-line);
+    border-radius: var(--agora-radius);
+    box-shadow: var(--agora-shadow);
+}
+
+.agora-card .num {
+    color: var(--agora-sky);
+    font-size: 0.62rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+}
+
+.agora-card h3 {
+    margin: 0.32rem 0 0.22rem;
+}
+
+.agora-card p {
+    margin: 0;
+    color: var(--agora-muted);
+    font-size: 0.84rem;
+    line-height: 1.55;
+}
+
+.agora-upload-intro {
+    margin-bottom: 0.7rem;
+    padding: 11px 14px;
+    color: var(--agora-text);
+    background: #f8fafc;
+    border: 1px solid var(--agora-line);
+    border-radius: 9px;
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+
+.agora-upload-intro strong {
+    color: var(--agora-ink);
+}
+
+.agora-report-head h2 {
+    margin: 0.22rem 0 0.22rem;
+}
+
+.agora-report-head p {
+    margin: 0;
+    color: var(--agora-muted);
+    font-size: 0.88rem;
+    line-height: 1.55;
+}
+
+.agora-report-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 0.75rem 0 0.35rem;
+}
+
+.agora-footer {
+    margin-top: 2rem;
+    padding-top: 14px;
+    border-top: 1px solid var(--agora-line);
+    color: var(--agora-muted);
+    font-size: 0.74rem;
+    line-height: 1.55;
+}
+
+.agora-footer strong {
+    color: var(--agora-ink);
+}
+
+/* Controles Streamlit */
+[data-testid="stMetric"] {
+    padding: 14px 16px;
+    background: var(--agora-white);
+    border: 1px solid var(--agora-line);
+    border-left: 3px solid var(--agora-blue-600);
+    border-radius: var(--agora-radius);
+    box-shadow: var(--agora-shadow);
+}
+
+[data-testid="stMetricLabel"] {
+    color: var(--agora-muted);
+    font-size: 0.76rem;
+    font-weight: 700;
+    line-height: 1.3;
+}
+
+[data-testid="stMetricValue"] {
+    color: var(--agora-ink);
+    font-size: clamp(1.5rem, 2.2vw, 2rem);
+    font-weight: 850;
+    letter-spacing: -0.04em;
+    line-height: 1.12;
+}
+
+[data-testid="stMetricDelta"] {
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+[data-testid="stWidgetLabel"] p {
+    color: var(--agora-ink);
+    font-size: 0.83rem;
+    font-weight: 650;
+}
+
+[data-testid="stSidebar"] {
+    background: var(--agora-white);
+    border-right: 1px solid var(--agora-line);
+}
+
+[data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+    padding-top: 0.65rem;
+}
+
+[data-testid="stSidebar"] .block-container {
+    padding-top: 0.35rem;
+}
+
+.agora-side-head {
+    padding: 2px 0 11px;
+    border-bottom: 1px solid var(--agora-line);
+    margin-bottom: 11px;
+}
+
+.agora-side-head span {
+    display: block;
+    color: var(--agora-sky);
+    font-size: 0.61rem;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+
+.agora-side-head strong {
+    display: block;
+    margin-top: 2px;
+    color: var(--agora-ink);
+    font-size: 1.03rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+}
+
+.agora-side-label {
+    margin: 0 0 5px;
+    color: var(--agora-muted);
+    font-size: 0.66rem;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
+.stButton > button,
+.stDownloadButton > button {
+    border-radius: 9px;
+    font-weight: 700;
+    transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.stButton > button[kind="primary"],
+.stDownloadButton > button[kind="primary"] {
+    color: #ffffff;
+    background: var(--agora-blue);
+    border-color: var(--agora-blue);
+}
+
+.stButton > button[kind="primary"]:hover,
+.stDownloadButton > button[kind="primary"]:hover {
+    background: var(--agora-deep);
+    border-color: var(--agora-deep);
+}
+
+.stTabs [data-baseweb="tab-list"] {
+    display: flex;
+    gap: 3px;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    border-bottom: 1px solid var(--agora-line);
+    scrollbar-width: none;
+}
+
+.stTabs [data-baseweb="tab-list"]::-webkit-scrollbar {
+    display: none;
+}
+
+.stTabs [data-baseweb="tab"] {
+    padding: 8px 12px;
+    color: var(--agora-muted);
+    border-radius: 8px 8px 0 0;
+    font-weight: 650;
+    white-space: nowrap;
+}
+
+.stTabs [data-baseweb="tab"]:hover {
+    color: var(--agora-blue);
+    background: #f8fafc;
+}
+
+.stTabs [aria-selected="true"] {
+    color: var(--agora-blue);
+    background: var(--agora-soft);
+}
+
+.stTabs [data-baseweb="tab-highlight"] {
+    background-color: var(--agora-blue);
+}
+
+.stTabs [data-baseweb="tab-border"] {
+    background-color: var(--agora-line);
+}
+
+[data-testid="stExpander"] {
+    background: var(--agora-white);
+    border: 1px solid var(--agora-line);
+    border-radius: 10px;
+}
+
+[data-testid="stExpander"] summary {
+    color: var(--agora-ink);
+    font-weight: 700;
+}
+
+[data-testid="stDataFrame"] {
+    overflow: hidden;
+    border: 1px solid var(--agora-line);
+    border-radius: 10px;
+}
+
+[data-testid="stFileUploaderDropzone"] {
+    background: #f8fafc;
+    border: 1px dashed #bfdbfe;
+    border-radius: 10px;
+}
+
+[data-testid="stAlert"] {
+    border-radius: 9px;
+}
+
+[data-testid="stProgress"] > div > div > div > div {
+    background-color: var(--agora-blue-600);
+}
+
+@media (max-width: 1200px) {
+    .agora-panorama {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 1000px) {
+    .agora-meta .agora-chip:last-child {
+        display: none;
+    }
+    .agora-onboard {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 760px) {
+    .block-container {
+        padding-left: 0.9rem !important;
+        padding-right: 0.9rem !important;
+    }
+    .agora-bar {
+        min-height: 64px;
+        padding: 8px 14px;
+    }
+    .agora-logo {
+        width: 52px;
+        height: 52px;
+        padding: 0;
+        border-radius: 12px;
+    }
+    .agora-title {
+        font-size: clamp(1.45rem, 6vw, 2rem);
+    }
+    .agora-tagline {
+        font-size: 0.82rem;
+        white-space: normal;
+    }
+    .agora-meta {
+        display: none;
+    }
+    #agoraHeader.is-compact .agora-title {
+        font-size: 1.25rem;
+    }
+    #agoraHeader.is-compact .agora-logo {
+        width: 38px;
+        height: 38px;
+    }
+    [data-testid="stMetric"] {
+        padding: 11px 12px;
+    }
+    [data-testid="stMetricValue"] {
+        font-size: 1.45rem;
+    }
+    .agora-panorama {
+        grid-template-columns: 1fr;
+    }
+    .agora-section-head p,
+    .agora-hero p {
+        font-size: 0.86rem;
+    }
+    .stTabs [data-baseweb="tab"] {
+        padding: 7px 9px;
+        font-size: 0.82rem;
+    }
+}
+
+@media (max-width: 520px) {
+    .agora-hero {
+        padding: 16px;
+    }
+    .agora-panorama-item {
+        padding: 12px 13px;
+    }
+    .agora-panorama-item em {
+        font-size: 1.35rem;
+    }
+    [data-testid="stMetricValue"] {
+        font-size: 1.3rem;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .agora-sticky *,
+    .agora-logo,
+    .agora-title,
+    .agora-tagline,
+    .agora-meta,
+    .agora-bar {
+        transition: none !important;
+    }
+}
