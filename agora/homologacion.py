@@ -15,6 +15,7 @@ from typing import Any, Optional
 import pandas as pd
 import streamlit as st
 
+from .auth import exigir_admin
 from .config import SEED_HOMOLOGACION, get_db_path
 from .utils import (
     clave_fuerza,
@@ -187,7 +188,17 @@ def cargar_homologacion() -> pd.DataFrame:
 
 
 def guardar_homologacion(tabla: pd.DataFrame) -> int:
-    """Reemplaza la tabla de homologación de forma atómica."""
+    """Reemplaza la homologación. Requiere sesión de administradora."""
+    exigir_admin()
+    return _guardar_homologacion(tabla)
+
+
+def _guardar_homologacion(tabla: pd.DataFrame) -> int:
+    """Reemplaza la tabla de homologación de forma atómica.
+
+    El llamador ya autorizó la operación. Se usa también para la semilla
+    inicial del sistema.
+    """
     datos = limpiar_homologacion(tabla)
     ruta = get_db_path()
     conexion = sqlite3.connect(ruta, timeout=30)
@@ -239,7 +250,7 @@ def asegurar_homologacion_sembrada() -> None:
         finally:
             conexion.close()
     if not existe:
-        guardar_homologacion(_leer_csv_homologacion(SEED_HOMOLOGACION))
+        _guardar_homologacion(_leer_csv_homologacion(SEED_HOMOLOGACION))
 
 
 def _entradas_mapeo(tabla: pd.DataFrame) -> list[tuple[str, Any, Any, str]]:

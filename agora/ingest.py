@@ -17,6 +17,7 @@ from typing import Any, Iterable, Optional
 import pandas as pd
 import streamlit as st
 
+from .auth import exigir_admin
 from .config import (
     CLAVE_ELECTORAL,
     COLUMNAS_SALIDA,
@@ -153,7 +154,20 @@ def guardar_fuentes_en_db(
     fuentes: Iterable[object],
     opciones: Optional[Iterable[Optional[dict[str, Any]]]] = None,
 ) -> int:
-    """Normaliza y persiste una o varias planillas en la base SQLite.
+    """Importa planillas. Requiere una sesión de administradora.
+
+    La autorización se comprueba en Python, no sólo en la interfaz. La carga
+    pública de la app nunca llama a esta función.
+    """
+    exigir_admin()
+    return _persistir_fuentes_en_db(fuentes, opciones)
+
+
+def _persistir_fuentes_en_db(
+    fuentes: Iterable[object],
+    opciones: Optional[Iterable[Optional[dict[str, Any]]]] = None,
+) -> int:
+    """Normaliza y persiste planillas. El llamador ya autorizó la operación.
 
     `opciones` permite acompañar cada fuente con un mapeo manual. La fuente
     original se guarda completa (bytes y resumen de lectura) en
@@ -332,7 +346,7 @@ def asegurar_db_sembrada() -> bool:
         return False
     if not os.path.isfile(SEED_RESULTADOS):
         return False
-    guardar_fuentes_en_db([SEED_RESULTADOS])
+    _persistir_fuentes_en_db([SEED_RESULTADOS])
     return True
 
 

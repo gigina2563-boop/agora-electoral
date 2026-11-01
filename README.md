@@ -43,6 +43,7 @@ Versión de aplicación: **2.1.0** · Python **3.12+** · Streamlit **1.64+**.
 app.py                         Entrada delgada: setup_page() + main()
 agora/
   config.py                    Rutas, secretos, entorno, SQLite, paleta
+  auth.py                      Acceso público, hash y sesión administrativa
   utils.py                     Formato, normalización y sanitización
   lectura_planillas.py         Detección de hojas, encabezados y metadatos
   ingest.py                    Validación, auditoría de fuentes y SQLite
@@ -74,15 +75,17 @@ streamlit run app.py
 
 También se incluye el lanzador `./streamlit` (usa `.venv` y el puerto 8501).
 
-La app arranca con la semilla de 2023. Para comparar, cargá una segunda
-planilla del mismo cargo y año distinto desde **Browse files / Examinar**. La
-app inspecciona todas las hojas, muestra la vista previa original y la
-normalizada, y sólo importa cuando pulsás **Validar e importar planillas**.
+La app arranca con la semilla de 2023. Para comparar, ingresá como
+administradora desde **Acceso administrador** y cargá una segunda planilla del
+mismo cargo y año distinto desde **Browse files / Examinar**. La app inspecciona
+todas las hojas, muestra la vista previa original y la normalizada, y sólo
+importa cuando pulsás **Validar e importar planillas**.
 
 ### Variables de entorno útiles
 
 | Variable | Uso |
 | --- | --- |
+| `ADMIN_PASSWORD_HASH` | Hash PBKDF2 de la contraseña de administradora. Obligatorio para cargar o homologar datos. |
 | `GROQ_API_KEY` | Clave del proveedor principal. |
 | `GROQ_MODEL` | Modelo Groq; por defecto `openai/gpt-oss-120b`. |
 | `GROQ_API_BASE` | Endpoint compatible OpenAI; por defecto la API de Groq. |
@@ -101,10 +104,64 @@ archivo `.streamlit/secrets.toml.example` sirve como plantilla; nunca subas
 `.streamlit/secrets.toml` al repositorio.
 
 ```toml
+ADMIN_PASSWORD_HASH = "pbkdf2_sha256$600000$..."
 GROQ_API_KEY = "gsk_..."
 GROQ_MODEL = "openai/gpt-oss-120b"
 AGORA_ENTORNO = "produccion"
 ```
+
+### Acceso público y administración
+
+La app tiene dos modalidades en la misma sesión de Streamlit:
+
+- **Visitante público:** entra sin registrarse y puede consultar resultados,
+  gráficos, indicadores, metodología y descargar los CSV públicos. No ve el
+  formulario de carga ni el editor de homologación.
+- **Administradora:** abre **Acceso administrador** en el panel lateral,
+  ingresa la contraseña y habilita la carga, validación, importación local y
+  edición de homologación. El botón **Cerrar sesión** vuelve al modo público.
+
+La autorización no depende de ocultar botones. `guardar_fuentes_en_db()` y
+`guardar_homologacion()` comprueban la sesión en Python y lanzan
+`PermissionError` si no hay una administradora autenticada. La semilla inicial
+del sistema usa rutas internas separadas y sólo se ejecuta cuando la base está
+vacía.
+
+#### Generar el hash de la contraseña
+
+Desde la raíz del proyecto, con el entorno virtual activado:
+
+```bash
+python -m agora.auth
+```
+
+El comando pide la contraseña dos veces sin mostrarla y escribe en la terminal
+un valor con este formato:
+
+```text
+pbkdf2_sha256$600000$<sal>$<hash>
+```
+
+El hash se imprime sólo en tu terminal para que lo copies a Secrets; no lo
+compartas ni lo publiques. No copies la contraseña a ningún archivo. Guardá
+únicamente ese hash como
+`ADMIN_PASSWORD_HASH` en `.streamlit/secrets.toml` (local) o en **Secrets** de
+Streamlit Cloud (producción). Si el hash no está configurado, el botón de
+acceso aparece deshabilitado y la consulta pública sigue funcionando.
+
+#### Configurar en Streamlit Community Cloud
+
+1. Abrí la app en Streamlit Cloud y entrá en **Settings → Secrets**.
+2. Agregá o actualizá la clave `ADMIN_PASSWORD_HASH` con el hash generado.
+3. Guardá los cambios y reiniciá la app si Streamlit no lo hace solo.
+4. Verificá que **Acceso administrador** abra el formulario y que el ingreso
+   correcto muestre **Cerrar sesión** y la sección de carga.
+
+La contraseña real y el hash son secretos: no los incluyas en GitHub, en
+capturas, en issues ni en la conversación. `.streamlit/secrets.toml` está
+ignorado por Git. En SQLite los cambios siguen siendo efímeros en el hosting
+gratuito; la semilla y la homologación versionadas se reconstruyen desde
+`data/` al reiniciar.
 
 ### Orden de motores
 
@@ -297,9 +354,11 @@ profundo. Sin amarillo. El logo usa un SVG del Congreso de la Nación.
 
 1. Subí el repositorio a GitHub.
 2. Elegí `app.py` como archivo principal.
-3. Cargá `GROQ_API_KEY` en **Secrets**.
+3. Cargá `ADMIN_PASSWORD_HASH` y `GROQ_API_KEY` en **Secrets**.
 4. La base SQLite es efímera; al reiniciar se reconstruye desde
    `data/seed_resultados.csv` y `data/homologacion_partidos.csv`.
+5. La contraseña administrativa nunca se guarda en el repositorio: sólo su
+   hash en Secrets.
 
 ### Render / Railway
 
@@ -339,12 +398,17 @@ Cobertura actual de la suite:
 - Pedersen con nuevas/extintas, supervivencia y NEP;
 - comparación con fuerza nueva y conservación de votos;
 - homologación por año, tildes, guardado/carga y fuerzas faltantes;
+- hash PBKDF2, comparación segura y rechazo de escrituras administrativas
+  cuando la sesión es pública;
+- login correcto, login incorrecto, cierre de sesión y controles ocultos para
+  visitantes en AppTest;
 - prompt, secciones del informe, Groq primero, Ollama local y fallback a reglas;
 - higiene de rutas absolutas y orden de `setup_page()`.
 
 Además se ejecutaron verificaciones de integración:
 
-- `AppTest` de Streamlit con una elección y con comparación 2023→2025;
+- `AppTest` de Streamlit con una elección, comparación 2023→2025, acceso
+  público, login correcto/incorrecto y cierre de sesión;
 - carga real del XLS oficial en navegador: 5 filas, 5 agrupaciones, 1 circuito,
   178.151 votos positivos y fuente original almacenada;
 - navegador headless (Chrome CDP): carga de dos planillas, importación,
@@ -394,7 +458,9 @@ cuenta y devolvía HTTP 404; por eso se actualizó el valor por defecto.
   `openai/gpt-oss-120b` y fallback determinista cuando falta la clave o la
   respuesta no respeta la estructura.
 - Arranque limpio: verificado con `venv` nuevo y dependencias instaladas desde
-  `requirements.txt`; **35 pruebas automatizadas OK** y semilla reconstruida.
+  `requirements.txt`; **43 pruebas automatizadas OK** (incluye acceso público,
+  login, logout y rechazo de escrituras administrativas) y semilla
+  reconstruida.
 - Navegación final: ocho pestañas y sección de carga verificadas en Chrome
   headless y Firefox/Playwright, sin excepciones, con datos de semilla y con
   comparación 2023→2025.

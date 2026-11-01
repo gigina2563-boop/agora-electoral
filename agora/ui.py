@@ -20,6 +20,12 @@ from .ai import (
     estado_motores,
     generar_dictamen_hibrido,
 )
+from .auth import (
+    admin_configurada,
+    cerrar_sesion,
+    es_admin,
+    iniciar_sesion,
+)
 from .config import (
     APP_VERSION,
     PALETA,
@@ -251,6 +257,115 @@ def _serie_historica(
                 }
             )
     return pd.DataFrame(filas)
+
+
+# ---------------------------------------------------------------------------
+# Acceso administrativo
+# ---------------------------------------------------------------------------
+
+
+def _render_acceso_admin() -> None:
+    """Bloque de acceso en la parte superior del panel lateral."""
+    with st.sidebar:
+        st.markdown(
+            """
+            <div class="agora-side-head">
+              <span>ACCESO</span>
+              <strong>Administración</strong>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if es_admin():
+            st.success("Sesión de administradora activa.")
+            st.caption("Carga, validación y homologación habilitadas.")
+            if st.button(
+                "Cerrar sesión",
+                width="stretch",
+                key="agora_btn_cerrar_sesion",
+            ):
+                cerrar_sesion()
+                for clave in (
+                    "agora_homologacion_abierta",
+                    "agora_mostrar_importacion",
+                    "agora_mensaje_importacion",
+                    "agora_firma_importada",
+                    "agora_upload_planillas",
+                    "agora_upload_homologacion",
+                    "agora_editor_homologacion",
+                    "agora_dictamen",
+                    "agora_dictamen_clave",
+                ):
+                    st.session_state.pop(clave, None)
+                st.rerun()
+            st.divider()
+            return
+
+        if not admin_configurada():
+            st.button(
+                "Acceso administrador",
+                width="stretch",
+                disabled=True,
+                help=(
+                    "Configurá ADMIN_PASSWORD_HASH en Secrets para habilitar "
+                    "el acceso."
+                ),
+            )
+            st.caption(
+                "El acceso administrativo todavía no está configurado. "
+                "La consulta pública sigue disponible."
+            )
+            st.divider()
+            return
+
+        if not st.session_state.get("agora_login_abierto"):
+            if st.button(
+                "Acceso administrador",
+                width="stretch",
+                key="agora_btn_abrir_login",
+            ):
+                st.session_state["agora_login_abierto"] = True
+                st.rerun()
+            st.caption(
+                "Consultá resultados sin registrarte. La edición de datos "
+                "requiere contraseña."
+            )
+            st.divider()
+            return
+
+        with st.form("agora_admin_login", clear_on_submit=True):
+            password = st.text_input(
+                "Contraseña",
+                type="password",
+                key="agora_admin_password",
+                autocomplete="current-password",
+            )
+            col_ingresar, col_cancelar = st.columns(2)
+            with col_ingresar:
+                ingresar = st.form_submit_button(
+                    "Ingresar",
+                    type="primary",
+                    width="stretch",
+                )
+            with col_cancelar:
+                cancelar = st.form_submit_button(
+                    "Cancelar",
+                    width="stretch",
+                )
+            if ingresar:
+                autenticada, mensaje = iniciar_sesion(password or "")
+                if autenticada:
+                    st.session_state["agora_login_abierto"] = False
+                    st.session_state.pop("agora_admin_password", None)
+                    st.rerun()
+                else:
+                    st.error(mensaje)
+            if cancelar:
+                st.session_state["agora_login_abierto"] = False
+                st.session_state.pop("agora_admin_password", None)
+                st.rerun()
+        st.divider()
 
 
 # ---------------------------------------------------------------------------
@@ -583,6 +698,8 @@ def _render_editor_planilla(
 
 def _render_carga_planillas(hay_datos: bool) -> None:
     """Sección de ingesta visible, separada de los filtros de análisis."""
+    if not es_admin():
+        return
     mostrar_mensaje = bool(st.session_state.get("agora_mostrar_importacion"))
     with st.expander(
         "Carga de planillas · CSV, XLS y XLSX",
@@ -728,6 +845,50 @@ def _render_carga_planillas(hay_datos: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _render_diagnostico_tecnico(modelo_ollama: str) -> str:
+    """Diagnóstico y recarga de caché, reservados a la administradora."""
+    with st.expander("Diagnóstico técnico"):
+        estado = estado_motores()
+        st.caption(f"Ágora Electoral v{APP_VERSION}")
+        st.caption(
+            "Persistencia: SQLite. En hosting gratuito la base es "
+            "efímera y se reconstruye desde `data/` al reiniciar."
+        )
+        st.caption(
+            f"Entorno: {config('AGORA_ENTORNO', 'produccion') or 'produccion'}"
+        )
+        st.markdown("**Motor de dictamen**")
+        st.caption(
+            "Orden de intento: Groq → Gemini → Ollama local → reglas."
+        )
+        if estado["groq"]:
+            st.success("Groq configurado como proveedor principal.")
+        elif estado["gemini"]:
+            st.warning(
+                "Groq no está configurado. Gemini queda como respaldo."
+            )
+        else:
+            st.warning(
+                "Sin clave de nube: se usará el motor analítico de reglas."
+            )
+        if estado["ollama"]:
+            modelo_ollama = st.text_input(
+                "Modelo Ollama local",
+                value=str(estado["modelo_ollama"]),
+                key="agora_ollama_model",
+                help="Timeout de conexión: 3 segundos.",
+            )
+        else:
+            st.caption(
+                "Ollama deshabilitado. Para uso local: "
+                "`AGORA_ENTORNO=local`."
+            )
+        if st.button("Recargar datos", width="stretch"):
+            st.cache_data.clear()
+            st.rerun()
+    return modelo_ollama
+
+
 def _render_sidebar(
     datos: pd.DataFrame,
     datos_crudos: pd.DataFrame,
@@ -793,9 +954,9 @@ def _render_sidebar(
                     else:
                         anio_base = None
                         st.caption(
-                            "Cargá una elección anterior del mismo cargo para "
-                            "habilitar Pedersen, supervivencia y prospectiva "
-                            "comparada."
+                            "Se requiere una elección anterior del mismo "
+                            "cargo para habilitar Pedersen, supervivencia y "
+                            "prospectiva comparada."
                         )
                     distritos = ["Todos"] + sorted(
                         datos_cargo["distrito"]
@@ -822,7 +983,13 @@ def _render_sidebar(
                         ),
                     )
         else:
-            st.info("Cargá una planilla para habilitar los filtros.")
+            if es_admin():
+                st.info("Cargá una planilla para habilitar los filtros.")
+            else:
+                st.info(
+                    "Todavía no hay resultados públicos cargados para "
+                    "habilitar los filtros."
+                )
 
         st.divider()
         st.markdown(
@@ -844,13 +1011,14 @@ def _render_sidebar(
                 f"{len(homologacion)} reglas activas. Todas las fuerzas "
                 "visibles tienen cobertura."
             )
-        if st.button(
-            "Editar homologación",
-            width="stretch",
-            key="agora_btn_abrir_homologacion",
-        ):
-            st.session_state["agora_homologacion_abierta"] = True
-            st.rerun()
+        if es_admin():
+            if st.button(
+                "Editar homologación",
+                width="stretch",
+                key="agora_btn_abrir_homologacion",
+            ):
+                st.session_state["agora_homologacion_abierta"] = True
+                st.rerun()
         st.download_button(
             "Descargar homologación CSV",
             data=csv_homologacion(homologacion),
@@ -859,46 +1027,9 @@ def _render_sidebar(
             width="stretch",
         )
 
-        st.divider()
-        with st.expander("Diagnóstico técnico"):
-            estado = estado_motores()
-            st.caption(f"Ágora Electoral v{APP_VERSION}")
-            st.caption(
-                "Persistencia: SQLite. En hosting gratuito la base es "
-                "efímera y se reconstruye desde `data/` al reiniciar."
-            )
-            st.caption(
-                f"Entorno: {config('AGORA_ENTORNO', 'produccion') or 'produccion'}"
-            )
-            st.markdown("**Motor de dictamen**")
-            st.caption(
-                "Orden de intento: Groq → Gemini → Ollama local → reglas."
-            )
-            if estado["groq"]:
-                st.success("Groq configurado como proveedor principal.")
-            elif estado["gemini"]:
-                st.warning(
-                    "Groq no está configurado. Gemini queda como respaldo."
-                )
-            else:
-                st.warning(
-                    "Sin clave de nube: se usará el motor analítico de reglas."
-                )
-            if estado["ollama"]:
-                modelo_ollama = st.text_input(
-                    "Modelo Ollama local",
-                    value=str(estado["modelo_ollama"]),
-                    key="agora_ollama_model",
-                    help="Timeout de conexión: 3 segundos.",
-                )
-            else:
-                st.caption(
-                    "Ollama deshabilitado. Para uso local: "
-                    "`AGORA_ENTORNO=local`."
-                )
-            if st.button("Recargar datos", width="stretch"):
-                st.cache_data.clear()
-                st.rerun()
+        if es_admin():
+            st.divider()
+            modelo_ollama = _render_diagnostico_tecnico(modelo_ollama)
 
     return {
         "datos": datos,
@@ -922,6 +1053,12 @@ def _render_sidebar(
 def _dialogo_homologacion(
     datos_crudos: pd.DataFrame, homologacion: pd.DataFrame
 ) -> None:
+    if not es_admin():
+        st.error(
+            "La edición de la homologación requiere una sesión de "
+            "administradora."
+        )
+        return
     st.markdown(
         "Una fila por denominación de origen. Si una alianza cambió de "
         "nombre entre elecciones, apuntá ambas filas al mismo nombre "
@@ -1092,14 +1229,20 @@ def _render_homologacion_block(
 
     col_a, col_b = st.columns(2)
     with col_a:
-        if st.button(
-            "Editar tabla de homologación",
-            type="primary",
-            width="stretch",
-            key="agora_btn_homologacion_tab",
-        ):
-            st.session_state["agora_homologacion_abierta"] = True
-            st.rerun()
+        if es_admin():
+            if st.button(
+                "Editar tabla de homologación",
+                type="primary",
+                width="stretch",
+                key="agora_btn_homologacion_tab",
+            ):
+                st.session_state["agora_homologacion_abierta"] = True
+                st.rerun()
+        else:
+            st.caption(
+                "La edición de la homologación está reservada a la "
+                "administradora."
+            )
     with col_b:
         st.download_button(
             "Descargar homologación (.csv)",
@@ -1407,7 +1550,7 @@ def _render_tab_inicio(
           </div>
           <div class="agora-panorama-item">
             <span>Comparación</span>
-            <strong>Cargá otra elección del mismo cargo</strong>
+            <strong>Se requiere otra elección del mismo cargo</strong>
             <em>Pendiente</em>
           </div>
         </div>
@@ -1418,16 +1561,17 @@ def _render_tab_inicio(
             <div class="agora-callout">
               <strong>El observatorio está listo para una lectura simple.</strong>
               Para habilitar volatilidad, supervivencia y prospectiva comparada,
-              cargá una elección anterior del mismo cargo y distrito.
+              se requiere una elección anterior del mismo cargo y distrito.
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-    st.caption(
-        "La sección de carga de planillas está disponible arriba, en "
-        "«Carga de planillas · CSV, XLS y XLSX»."
-    )
+    if es_admin():
+        st.caption(
+            "La sección de carga de planillas está disponible arriba, en "
+            "«Carga de planillas · CSV, XLS y XLSX»."
+        )
 
 
 def _render_tab_resultados(
@@ -1601,7 +1745,7 @@ def _render_tab_resultados(
         "Resultados electorales",
         (
             f"{'Todos los distritos' if distrito == 'Todos' else distrito} · "
-            "corte de una sola elección. Cargá un ciclo anterior del mismo "
+            "corte de una sola elección. Se requiere un ciclo anterior del mismo "
             "cargo para habilitar la comparación."
         ),
     )
@@ -1670,7 +1814,7 @@ def _render_tab_resultados(
         """
         <div class="agora-callout">
           <strong>¿Qué falta para el análisis de volatilidad?</strong>
-          Cargá los resultados de otra elección del mismo cargo y distrito.
+          Se requieren los resultados de otra elección del mismo cargo y distrito.
           Pedersen necesita dos ciclos comparables y asigna 0,0% a las fuerzas
           nuevas o extintas para no sobreestimar la estabilidad.
         </div>
@@ -1897,7 +2041,7 @@ def _render_tab_pedersen(
             "Volatilidad de Pedersen",
             (
                 "El índice requiere dos elecciones comparables del mismo "
-                "cargo. Cargá un ciclo anterior para calcularlo."
+                "cargo. Se requiere un ciclo anterior para calcularlo."
             ),
         )
         st.info(
@@ -2389,7 +2533,7 @@ def _render_tab_prospectiva(
     if estado["modo"] != "comparacion":
         st.info(
             "La prospectiva comparada requiere al menos dos elecciones del "
-            "mismo cargo. Cargá un ciclo anterior para habilitar el marco de "
+            "mismo cargo. Se requiere un ciclo anterior para habilitar el marco de "
             "escenarios."
         )
         columnas = st.columns(3)
@@ -2581,6 +2725,22 @@ def _render_tab_informes(
 
 
 def _render_onboarding() -> None:
+    if not es_admin():
+        _hero(
+            "OBSERVATORIO ELECTORAL · LA RIOJA",
+            "Consulta pública del observatorio",
+            (
+                "La base pública todavía no tiene resultados cargados. "
+                "Cuando la administradora importe las planillas, los "
+                "indicadores y las descargas estarán disponibles acá."
+            ),
+        )
+        st.info(
+            "No hace falta registrarse para consultar. La carga y la "
+            "homologación de datos están reservadas a la administradora."
+        )
+        return
+
     _hero(
         "OBSERVATORIO ELECTORAL · LA RIOJA",
         "Lectura rigurosa del poder político",
@@ -2628,10 +2788,16 @@ def _render_tabs_vacio() -> None:
         _render_onboarding()
     for tab in tabs[1:]:
         with tab:
-            st.info(
-                "Cargá una planilla para habilitar esta sección del "
-                "observatorio."
-            )
+            if es_admin():
+                st.info(
+                    "Cargá una planilla para habilitar esta sección del "
+                    "observatorio."
+                )
+            else:
+                st.info(
+                    "Esta sección se habilitará cuando haya resultados "
+                    "públicos cargados."
+                )
 
 
 def _render_dashboard(filtros: dict[str, Any]) -> None:
@@ -2669,6 +2835,7 @@ def _render_dashboard(filtros: dict[str, Any]) -> None:
 
 def main() -> None:
     render_header()
+    _render_acceso_admin()
 
     error_semilla: Exception | None = None
     try:
@@ -2681,25 +2848,27 @@ def main() -> None:
     homologacion = cargar_homologacion()
     datos = aplicar_homologacion(datos_crudos, homologacion)
 
-    _render_carga_planillas(not datos.empty)
-    if st.session_state.pop("agora_mostrar_importacion", False):
-        st.success(
-            st.session_state.get(
-                "agora_mensaje_importacion", "Planillas procesadas."
+    if es_admin():
+        _render_carga_planillas(not datos.empty)
+        if st.session_state.pop("agora_mostrar_importacion", False):
+            st.success(
+                st.session_state.get(
+                    "agora_mensaje_importacion", "Planillas procesadas."
+                )
             )
-        )
 
     filtros = _render_sidebar(datos, datos_crudos, homologacion)
 
     if error_semilla is not None:
         st.warning(
-            "No se pudo preparar la base inicial. La app sigue disponible "
-            "para cargas manuales."
+            "No se pudo preparar la base inicial. La consulta pública sigue "
+            "disponible."
         )
-        with st.expander("Detalle técnico"):
-            st.code(str(error_semilla))
+        if es_admin():
+            with st.expander("Detalle técnico"):
+                st.code(str(error_semilla))
 
-    if st.session_state.get("agora_homologacion_abierta"):
+    if es_admin() and st.session_state.get("agora_homologacion_abierta"):
         _dialogo_homologacion(datos_crudos, homologacion)
 
     if filtros["datos"].empty:

@@ -14,6 +14,7 @@ from unittest.mock import patch
 import pandas as pd
 
 import agora.ai as ai
+import agora.auth as auth
 import agora.config as config
 import agora.homologacion as homologacion
 import agora.ingest as ingest
@@ -40,6 +41,9 @@ class BaseTemporal(unittest.TestCase):
         )
         self._env.start()
         self.addCleanup(self._env.stop)
+        self._auth = patch("agora.auth.es_admin", return_value=True)
+        self._auth.start()
+        self.addCleanup(self._auth.stop)
         config.get_db_path.cache_clear()
         ingest.cargar_datos_db.clear()
         homologacion.cargar_homologacion.clear()
@@ -731,6 +735,81 @@ class MotorTests(BaseTemporal):
             "http://127.0.0.1:9999/openai/v1/chat/completions",
             post.call_args.args[0],
         )
+
+
+class SeguridadTests(BaseTemporal):
+    """El acceso público no puede ejecutar escrituras administrativas."""
+
+    @patch("agora.auth.es_admin", return_value=False)
+    def test_hash_de_password_y_comparacion(self, _admin: object) -> None:
+        clave = "clave-de-prueba-segura-2026"
+        hash_generado = auth.generar_hash_password(
+            clave, iteraciones=100_000
+        )
+        self.assertTrue(hash_generado.startswith("pbkdf2_sha256$"))
+        self.assertNotIn(clave, hash_generado)
+        self.assertTrue(auth.verificar_password(clave, hash_generado))
+        self.assertFalse(
+            auth.verificar_password("otra-clave-distinta", hash_generado)
+        )
+        self.assertFalse(auth.verificar_password(clave, "hash-invalido"))
+        self.assertFalse(
+            auth.verificar_password(
+                clave, "pbkdf2_sha256$600000$%%%$%%%"
+            )
+        )
+
+        with patch("agora.auth.config", return_value=hash_generado):
+            self.assertTrue(auth.admin_configurada())
+        with patch("agora.auth.config", return_value=None):
+            self.assertFalse(auth.admin_configurada())
+
+    @patch("agora.auth.es_admin", return_value=False)
+    def test_visitante_no_puede_importar_planillas(
+        self, _admin: object
+    ) -> None:
+        contenido = (
+            "anio,distrito,circuito,cargo,fuerza,votos_positivos\n"
+            "2023,C,C1,P,A,10\n"
+        ).encode("utf-8")
+        with self.assertRaises(PermissionError):
+            ingest.guardar_fuentes_en_db([io.BytesIO(contenido)])
+        self.assertFalse(Path(self.db).exists())
+
+    @patch("agora.auth.es_admin", return_value=False)
+    def test_visitante_no_puede_guardar_homologacion(
+        self, _admin: object
+    ) -> None:
+        tabla = pd.DataFrame(
+            [
+                {
+                    "fuerza_origen": "A",
+                    "fuerza_homologada": "A",
+                    "tipo": "Partido",
+                    "anio_desde": "",
+                    "anio_hasta": "",
+                    "notas": "",
+                }
+            ]
+        )
+        with self.assertRaises(PermissionError):
+            homologacion.guardar_homologacion(tabla)
+        self.assertFalse(Path(self.db).exists())
+
+    @patch("agora.auth.es_admin", return_value=False)
+    def test_visitante_no_puede_sembrar_identidades(
+        self, _admin: object
+    ) -> None:
+        datos = pd.DataFrame({"fuerza": ["Fuerza A"]})
+        tabla = homologacion._tabla_vacia()
+        with self.assertRaises(PermissionError):
+            homologacion.sembrar_identidades(datos, tabla)
+        self.assertFalse(Path(self.db).exists())
+
+    @patch("agora.auth.es_admin", return_value=False)
+    def test_exigir_admin_falla_sin_sesion(self, _admin: object) -> None:
+        with self.assertRaises(PermissionError):
+            auth.exigir_admin()
 
 
 class HigieneTests(unittest.TestCase):

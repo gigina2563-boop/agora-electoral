@@ -11,11 +11,14 @@ from unittest.mock import patch
 
 from streamlit.testing.v1 import AppTest
 
+import agora.auth as auth
 import agora.config as config
 import agora.homologacion as homologacion
 import agora.ingest as ingest
 
 RAIZ = Path(__file__).resolve().parent.parent
+CLAVE_ADMIN = "clave-admin-de-prueba-2026"
+HASH_ADMIN = auth.generar_hash_password(CLAVE_ADMIN, iteraciones=100_000)
 
 PLANILLA = (
     "anio,distrito,circuito,cargo,fuerza,votos_positivos,porcentaje\n"
@@ -55,10 +58,119 @@ class AppTestIntegration(unittest.TestCase):
         )
         self._env.start()
         self.addCleanup(self._env.stop)
+        self._auth_config = patch(
+            "agora.auth.config",
+            side_effect=self._config_auth,
+        )
+        self._auth_config.start()
+        self.addCleanup(self._auth_config.stop)
         config.get_db_path.cache_clear()
         ingest.cargar_datos_db.clear()
         homologacion.cargar_homologacion.clear()
-        ingest.guardar_fuentes_en_db([io.BytesIO(PLANILLA.encode("utf-8"))])
+        with patch("agora.auth.es_admin", return_value=True):
+            ingest.guardar_fuentes_en_db(
+                [io.BytesIO(PLANILLA.encode("utf-8"))]
+            )
+
+    @staticmethod
+    def _config_auth(
+        nombre: str, defecto: str | None = None
+    ) -> str | None:
+        if nombre == "ADMIN_PASSWORD_HASH":
+            return HASH_ADMIN
+        return config.config(nombre, defecto)
+
+    def _abrir_login(self, at: AppTest) -> None:
+        at.run()
+        self.assertEqual(len(at.exception), 0, at.exception)
+        botones = [b for b in at.button if b.label == "Acceso administrador"]
+        self.assertTrue(botones)
+        botones[0].click().run()
+        self.assertEqual(len(at.exception), 0, at.exception)
+
+    def test_visitante_no_ve_controles_administrativos(self) -> None:
+        at = AppTest.from_file(str(RAIZ / "app.py"), default_timeout=90)
+        at.run()
+        self.assertEqual(len(at.exception), 0, at.exception)
+        self.assertIn(
+            "Acceso administrador", [b.label for b in at.button]
+        )
+        self.assertNotIn("Cerrar sesión", [b.label for b in at.button])
+        self.assertFalse(
+            any(
+                "Carga de planillas" in expander.label
+                for expander in at.expander
+            )
+        )
+        self.assertEqual(len(at.file_uploader), 0)
+        self.assertNotIn(
+            "Editar homologación", [b.label for b in at.button]
+        )
+        self.assertNotIn(
+            "Editar tabla de homologación", [b.label for b in at.button]
+        )
+        self.assertIn(
+            "Resultados electorales", [tab.label for tab in at.tabs]
+        )
+
+    def test_login_incorrecto_no_habilita_administracion(self) -> None:
+        at = AppTest.from_file(str(RAIZ / "app.py"), default_timeout=90)
+        self._abrir_login(at)
+        password = [
+            campo for campo in at.text_input if campo.label == "Contraseña"
+        ]
+        self.assertTrue(password)
+        password[0].set_value("clave-incorrecta")
+        ingresar = [b for b in at.button if b.label == "Ingresar"]
+        self.assertTrue(ingresar)
+        ingresar[0].click().run()
+        self.assertEqual(len(at.exception), 0, at.exception)
+        self.assertTrue(
+            any("Contraseña incorrecta" in error.value for error in at.error)
+        )
+        self.assertNotIn("Cerrar sesión", [b.label for b in at.button])
+        self.assertEqual(len(at.file_uploader), 0)
+
+    def test_login_correcto_habilita_y_cerrar_sesion_bloquea(self) -> None:
+        at = AppTest.from_file(str(RAIZ / "app.py"), default_timeout=90)
+        self._abrir_login(at)
+        password = [
+            campo for campo in at.text_input if campo.label == "Contraseña"
+        ]
+        self.assertTrue(password)
+        password[0].set_value(CLAVE_ADMIN)
+        ingresar = [b for b in at.button if b.label == "Ingresar"]
+        self.assertTrue(ingresar)
+        ingresar[0].click().run()
+        self.assertEqual(len(at.exception), 0, at.exception)
+        self.assertIn("Cerrar sesión", [b.label for b in at.button])
+        self.assertTrue(
+            any(
+                "Carga de planillas" in expander.label
+                for expander in at.expander
+            )
+        )
+        self.assertTrue(
+            any(
+                "Subí una o varias planillas" in cargador.label
+                for cargador in at.file_uploader
+            )
+        )
+        self.assertIn(
+            "Editar homologación", [b.label for b in at.button]
+        )
+
+        cerrar = [b for b in at.button if b.label == "Cerrar sesión"]
+        cerrar[0].click().run()
+        self.assertEqual(len(at.exception), 0, at.exception)
+        self.assertIn(
+            "Acceso administrador", [b.label for b in at.button]
+        )
+        self.assertNotIn("Cerrar sesión", [b.label for b in at.button])
+        self.assertEqual(len(at.file_uploader), 0)
+        self.assertNotIn(
+            "Editar homologación", [b.label for b in at.button]
+        )
 
     def test_comparacion_y_dictamen_por_reglas(self) -> None:
         at = AppTest.from_file(str(RAIZ / "app.py"), default_timeout=90)
