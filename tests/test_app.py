@@ -172,6 +172,46 @@ class AppTestIntegration(unittest.TestCase):
             "Editar homologación", [b.label for b in at.button]
         )
 
+    def test_panel_de_homologacion_historica_para_administradora(self) -> None:
+        at = AppTest.from_file(str(RAIZ / "app.py"), default_timeout=90)
+        self._abrir_login(at)
+        password = [
+            campo for campo in at.text_input if campo.label == "Contraseña"
+        ]
+        password[0].set_value(CLAVE_ADMIN)
+        [b for b in at.button if b.label == "Ingresar"][0].click().run()
+        self.assertEqual(len(at.exception), 0, at.exception)
+
+        abrir = [
+            b for b in at.button if b.label == "Homologación histórica"
+        ]
+        self.assertTrue(abrir)
+        abrir[0].click().run()
+        self.assertEqual(len(at.exception), 0, at.exception)
+
+        etiquetas = [tab.label for tab in at.tabs]
+        for etiqueta in (
+            "Identidades",
+            "Denominaciones",
+            "Relaciones",
+            "Bloques",
+            "Ausencias",
+            "Conflictos y duplicados",
+        ):
+            self.assertIn(etiqueta, etiquetas)
+        self.assertTrue(
+            any(
+                "Validada · se aplica" in bloque.value
+                for bloque in at.markdown
+            )
+        )
+        self.assertTrue(
+            any(
+                "Provisoria · requiere fuente" in bloque.value
+                for bloque in at.markdown
+            )
+        )
+
     def test_comparacion_y_dictamen_por_reglas(self) -> None:
         at = AppTest.from_file(str(RAIZ / "app.py"), default_timeout=90)
         at.run()

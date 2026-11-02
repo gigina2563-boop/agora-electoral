@@ -1,0 +1,17 @@
+nombre_electoral,identidad,anio_desde,anio_hasta,tipo_eleccion,cargo,distrito,nivel,estado,fuente,confianza,notas
+COMPROMISO FEDERAL,COMPROMISO FEDERAL,2019,2019,,,,alianza,pendiente,Fuente primaria pendiente,baja,Etiqueta 2019 sin documentación suficiente para homologarla.
+DEMOCRATA CRISTIANO,DEMÓCRATA CRISTIANO,2023,2023,,,,partido,validada,Planilla electoral,alta,Variante sin tildes de la misma identidad.
+FRENTE DE IZQUIERDA Y DE TRABAJADORES,FRENTE DE IZQUIERDA Y DE TRABAJADORES - UNIDAD,2023,2023,,,,alianza,validada,Planilla electoral,alta,Denominación abreviada en la fuente; no implica fusión con otra fuerza.
+FRENTE DE IZQUIERDA Y DE TRABAJADORES - UNIDAD,FRENTE DE IZQUIERDA Y DE TRABAJADORES - UNIDAD,2019,2023,,,,alianza,validada,Planilla electoral,alta,Denominación oficial de la alianza.
+FRENTE DE IZQUIERDA Y DE TRABJADORES - UNIDAD,FRENTE DE IZQUIERDA Y DE TRABAJADORES - UNIDAD,2019,2019,,,,alianza,validada,Planilla electoral,media,Error de tipeo en la fuente 2019; misma denominación oficial.
+FRENTE DE TODOS,FRENTE DE TODOS,2019,2021,,,,alianza,validada,Planilla electoral,alta,Etiqueta 2019 y 2021.
+HACEMOS POR NUESTRO PAIS,HACEMOS POR NUESTRO PAÍS,2023,2023,,,,alianza,validada,Planilla electoral,alta,Variante sin tildes de la misma identidad.
+HACEMOS POR NUESTRO PAIS - PARTIDO DEMOCRATA CRISTIANO,HACEMOS POR NUESTRO PAÍS - PARTIDO DEMÓCRATA CRISTIANO,2023,2023,,,,alianza,validada,Planilla electoral,media,Etiqueta 2023. Composición y relación con Hacemos y el PDC pendientes de fuente primaria.
+JUNTOS POR EL CAMBIO,JUNTOS POR EL CAMBIO,2023,2023,,,,alianza,validada,Planilla electoral,alta,Etiqueta 2023.
+JUNTOS PORLA RIOJA,JUNTOS POR LA RIOJA,2019,2019,,,,alianza,validada,Planilla electoral,media,Error de tipeo en la fuente 2019; se corrige mediante denominación explícita.
+LA LIBERTAD AVANZA,LA LIBERTAD AVANZA,2023,2023,,,,partido,validada,Planilla electoral,alta,Identidad 2023.
+PROYECTO JOVEN,PROYECTO JOVEN,2023,2023,,,,partido,validada,Planilla electoral,alta,Identidad 2023.
+UNION DEL CENTRO DEMOCRATICO,UNIÓN DEL CENTRO DEMOCRÁTICO,2021,2023,,,,partido,validada,Planilla electoral,alta,Variante sin tildes de la misma identidad.
+UNION POR LA PATRIA,UNIÓN POR LA PATRIA,2023,2023,,,,alianza,validada,Planilla electoral,alta,Variante sin tildes de la misma identidad.
+UNIDOS,UNIDOS,2021,2021,,,,alianza,validada,Planilla electoral,alta,Etiqueta 2021. Identidad separada de UCD y de Vamos La Rioja.
+VAMOS LA RIOJA,VAMOS LA RIOJA,2021,2021,,,,alianza,validada,Planilla electoral,alta,Etiqueta 2021.

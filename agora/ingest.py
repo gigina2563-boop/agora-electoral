@@ -27,6 +27,13 @@ from .config import (
     get_db_path,
     seed_habilitado,
 )
+from .integridad import (
+    COLUMNAS_RESULTADOS,
+    canonizar_distrito,
+    crear_tabla_auditoria,
+    guardar_auditoria,
+    normalizar_resultados,
+)
 from .lectura_planillas import (
     InspeccionPlanilla,
     _normalizar_con_inspeccion,
@@ -58,19 +65,11 @@ __all__ = [
 # SQLite
 # ---------------------------------------------------------------------------
 def _crear_tabla_resultados(conexion: sqlite3.Connection) -> None:
-    conexion.execute(
-        """
-        CREATE TABLE IF NOT EXISTS resultados_electorales (
-            anio INTEGER NOT NULL,
-            distrito TEXT NOT NULL,
-            circuito TEXT NOT NULL,
-            cargo TEXT NOT NULL,
-            fuerza TEXT NOT NULL,
-            votos_positivos REAL,
-            porcentaje REAL NOT NULL
-        )
-        """
-    )
+    # La tabla canónica incluye claves internas y trazabilidad. Se crea desde
+    # ``integridad`` para que la app y las migraciones usen el mismo esquema.
+    from .integridad import crear_tabla_resultados
+
+    crear_tabla_resultados(conexion)
 
 
 def _crear_tabla_fuentes(conexion: sqlite3.Connection) -> None:
@@ -123,7 +122,7 @@ def _guardar_fuente_original(
     conexion: sqlite3.Connection,
     fuente: object,
     inspeccion: InspeccionPlanilla,
-) -> None:
+) -> str:
     contenido = leer_bytes(fuente)
     huella = hashlib.sha256(contenido).hexdigest()
     resumen = json.dumps(
@@ -148,6 +147,7 @@ def _guardar_fuente_original(
             datetime.now(timezone.utc).isoformat(timespec="seconds"),
         ),
     )
+    return huella
 
 
 def guardar_fuentes_en_db(
@@ -191,8 +191,20 @@ def _persistir_fuentes_en_db(
 
     normalizadas: list[pd.DataFrame] = []
     inspecciones: list[InspeccionPlanilla] = []
+    auditorias: list[pd.DataFrame] = []
     for fuente, opcion in zip(lista, opciones_lista):
+        contenido = leer_bytes(fuente)
+        huella = hashlib.sha256(contenido).hexdigest()
+        archivo = nombre_fuente(fuente) or "planilla"
         datos, inspeccion = _normalizar_con_inspeccion(fuente, opcion)
+        datos["fuente_huella"] = huella
+        datos["archivo"] = archivo
+        auditoria = datos.attrs.get("auditoria")
+        if isinstance(auditoria, pd.DataFrame) and not auditoria.empty:
+            auditoria = auditoria.copy()
+            auditoria["huella_fuente"] = huella
+            auditoria["archivo"] = archivo
+            auditorias.append(auditoria)
         normalizadas.append(datos)
         inspecciones.append(inspeccion)
 
@@ -200,33 +212,52 @@ def _persistir_fuentes_en_db(
     if nuevos.empty:
         return 0
 
+    # Deduplicación entre hojas y archivos. La prioridad 1 indica que esta
+    # importación es más reciente y puede reemplazar una fila anterior.
+    nuevos, auditoria_cruzada = normalizar_resultados(nuevos, prioridad=1)
+    if not auditoria_cruzada.empty:
+        auditoria_cruzada = auditoria_cruzada.copy()
+        auditoria_cruzada["huella_fuente"] = auditoria_cruzada[
+            "huella_fuente"
+        ].fillna("cruce:importacion")
+        auditoria_cruzada["archivo"] = auditoria_cruzada["archivo"].fillna(
+            "importación"
+        )
+        auditorias.append(auditoria_cruzada)
+
     ruta = get_db_path()
     conexion = sqlite3.connect(ruta, timeout=30)
     try:
         with conexion:
-            _crear_tabla_resultados(conexion)
             _crear_tabla_fuentes(conexion)
             for fuente, inspeccion in zip(lista, inspecciones):
                 _guardar_fuente_original(conexion, fuente, inspeccion)
 
-            actuales = pd.read_sql_query(
-                "SELECT * FROM resultados_electorales", conexion
-            )
-            combinado = pd.concat([actuales, nuevos], ignore_index=True)
-            combinado["anio"] = pd.to_numeric(
-                combinado["anio"], errors="coerce"
-            )
-            combinado = combinado.dropna(subset=["anio"])
-            combinado["anio"] = combinado["anio"].astype(int)
-            for columna in ("distrito", "circuito", "cargo", "fuerza"):
-                combinado[columna] = (
-                    combinado[columna].fillna("").astype(str).str.strip()
+            tablas = {
+                fila[0]
+                for fila in conexion.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            if "resultados_electorales" in tablas:
+                actuales = pd.read_sql_query(
+                    "SELECT * FROM resultados_electorales", conexion
                 )
-            combinado = combinado.drop_duplicates(
-                subset=CLAVE_ELECTORAL, keep="last"
+                actuales = actuales.drop(columns=["id"], errors="ignore")
+                actuales["_prioridad"] = 0
+            else:
+                actuales = pd.DataFrame(columns=COLUMNAS_RESULTADOS)
+            nuevos = nuevos.copy()
+            nuevos["_prioridad"] = 1
+            combinado, auditoria_mezcla = normalizar_resultados(
+                pd.concat([actuales, nuevos], ignore_index=True)
             )
-            combinado = combinado[COLUMNAS_SALIDA]
+            if not auditoria_mezcla.empty:
+                auditorias.append(auditoria_mezcla)
+            combinado = combinado.reindex(columns=COLUMNAS_RESULTADOS)
 
+            crear_tabla_auditoria(conexion)
+            conexion.execute("DROP TABLE IF EXISTS resultados_electorales_tmp")
             combinado.to_sql(
                 "resultados_electorales_tmp",
                 conexion,
@@ -239,14 +270,16 @@ def _persistir_fuentes_en_db(
                 "RENAME TO resultados_electorales"
             )
             conexion.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_resultados_clave "
+                "CREATE UNIQUE INDEX idx_resultados_clave "
                 "ON resultados_electorales "
-                "(anio, distrito, circuito, cargo, fuerza)"
+                "(anio, distrito_clave, circuito, cargo, fuerza_clave)"
             )
             conexion.execute(
-                "CREATE INDEX IF NOT EXISTS idx_resultados_filtro "
-                "ON resultados_electorales (cargo, anio, distrito)"
+                "CREATE INDEX idx_resultados_filtro "
+                "ON resultados_electorales (cargo, anio, distrito_clave)"
             )
+            for auditoria in auditorias:
+                guardar_auditoria(conexion, auditoria)
     finally:
         conexion.close()
 
@@ -309,6 +342,7 @@ def _limpiar_datos_electorales(tabla: pd.DataFrame) -> pd.DataFrame:
     datos["anio"] = datos["anio"].astype(int)
     for columna in ("distrito", "circuito", "cargo", "fuerza"):
         datos[columna] = datos[columna].fillna("").astype(str).str.strip()
+    datos["distrito"] = datos["distrito"].map(canonizar_distrito)
     return datos.reset_index(drop=True)
 
 

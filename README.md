@@ -4,7 +4,7 @@ Aplicación Streamlit del **Observatorio Electoral de La Rioja** para ingerir
 escrutinios, comparar elecciones, calcular volatilidad de Pedersen y generar un
 dictamen politológico asistido por IA.
 
-Versión de aplicación: **2.1.0** · Python **3.12+** · Streamlit **1.64+**.
+Versión de aplicación: **2.2.0** · Python **3.12+** · Streamlit **1.64+**.
 
 ---
 
@@ -21,11 +21,14 @@ Versión de aplicación: **2.1.0** · Python **3.12+** · Streamlit **1.64+**.
   `data/seed_resultados.csv` cuando la base está vacía.
 - Comparación entre dos elecciones del mismo cargo, con agregación por fuerza y
   desagregado territorial.
-- **Índice de Volatilidad Total de Pedersen**, con mitigación del sesgo de
-  supervivencia: las fuerzas nuevas o extintas reciben `0,0%` en el período en
-  que no compiten.
+- **Índice de Volatilidad Total de Pedersen**, sin imputar ausencias no
+  verificadas: una fuerza nueva o extinta recibe `0,0%` solo cuando la cobertura
+  territorial comparable o una ausencia explícita lo demuestran.
 - Supervivencia partidaria y Número Efectivo de Partidos (NEP).
-- Tabla de **homologación de partidos y alianzas** para evitar comparar como
+- **Homologación histórica multinivel** de identidades, denominaciones,
+  relaciones y bloques, con fuente, confianza y estado de validación.
+- Tabla básica de **homologación de partidos y alianzas** conservada para
+  compatibilidad, para evitar comparar como
   distintas a la misma fuerza por cambios de nombre, tildes o denominación.
 - Dictamen híbrido: **Groq** como proveedor principal, **Gemini** como respaldo
   opcional, **Ollama** solo en local y **motor de reglas** como fallback
@@ -48,15 +51,28 @@ agora/
   lectura_planillas.py         Detección de hojas, encabezados y metadatos
   ingest.py                    Validación, auditoría de fuentes y SQLite
   metrics.py                   Agregación, Pedersen, supervivencia, NEP
-  homologacion.py              Tabla de equivalencias y aplicación por año
+  integridad.py                Claves territoriales, deduplicación y auditoría
+  homologacion.py              Tabla básica heredada y aplicación por año
+  homologacion_historica.py    Identidades, denominaciones, relaciones y bloques
+  migraciones.py               Migración SQLite idempotente y respaldos
   ai.py                        Prompt, Groq, Gemini, Ollama y reglas
   header.py                    Cabecera sticky compatible con Streamlit
   ui.py                        Sidebar, vistas, pestañas, diálogo y descargas
   assets/header.{css,html,js}  Cabecera institucional
 data/
   seed_resultados.csv          Semilla verificable (2023)
-  homologacion_partidos.csv    Tabla inicial de homologación
+  homologacion_partidos.csv    Tabla básica de compatibilidad
+  identidades_fuerzas.csv      Identidades estables y estado de validación
+  denominaciones_fuerzas.csv   Nombres electorales por año y contexto
+  relaciones_historicas.csv    Continuidades, cambios y fusiones documentadas
+  bloques_electorales.csv      Bloques de comparación
+  bloque_miembros.csv          Membresía de bloques por año
+  ausencias_verificadas.csv    Ausencias explícitas para imputar 0,0%
+backups/                       Copias de seguridad previas a migraciones
 tests/test_core.py             Pruebas de ingesta, métricas, homologación, IA
+tests/test_homologacion_historica.py
+                               Pruebas de deduplicación, homologación y migración
+tests/test_interfaz.py         Identidad visual, paleta y empaquetado Cloud
 ```
 
 Los módulos históricos `analizador.py`, `ingesta_electoral.py` y `respuesta.py`
@@ -277,10 +293,12 @@ porcentajes de los circuitos y la interfaz lo advierte. La comparación conserva
 VT = Σ |V(i,t) − V(i,t−1)| / 2
 ```
 
-Con mitigación activada (por defecto), una fuerza sin datos en uno de los dos
-períodos recibe `0,0%` en ese período. Esto evita el sesgo de supervivencia y
-contabiliza entradas y salidas del sistema de partidos. Si se desactiva, la
-interfaz marca el índice como parcial y advierte que no se infieren ausencias.
+Con la opción de ausencias verificadas activada, una fuerza que no se presentó
+recibe `0,0%` únicamente si la cobertura de circuitos es completa y comparable
+en ambos períodos, o si existe una ausencia explícita validada en
+`ausencias_verificadas`. Una ausencia no verificada queda como `sin_dato`: el
+índice se marca como **parcial** y no se completa con cero. Esto distingue
+“no compitió” de “no tenemos el dato”.
 
 El detalle clasifica cada fuerza como **Sobreviviente**, **Nueva**, **Extinta**
 o **Sin votos**, e informa su aporte absoluto a Pedersen.
@@ -295,24 +313,45 @@ o **Sin votos**, e informa su aporte absoluto a Pedersen.
   individual de votos.
 - NEP = `1 / Σ p_i²` sobre la participación agregada.
 
-### 5.4 Homologación
+### 5.4 Homologación histórica
 
-La tabla `homologacion_fuerzas` se guarda en SQLite y se siembra desde
-`data/homologacion_partidos.csv`. Cada regla tiene:
+La homologación no se reduce a limpiar tildes. El modelo nuevo distingue cuatro
+niveles y los conserva con trazabilidad:
 
-- `fuerza_origen`: denominación tal como aparece en la planilla;
-- `fuerza_homologada`: nombre canónico;
-- `tipo`: Partido, Alianza, Coalición, Independiente u Otro;
-- `anio_desde` / `anio_hasta`: opcionales, para reglas específicas por año;
-- `notas`.
+1. **Identidad** (`fuerzas_identidades`): nombre estable con el que se compara
+   una fuerza a lo largo del tiempo.
+2. **Denominación** (`fuerzas_denominaciones`): nombre electoral observado,
+   acotado por año, tipo de elección, cargo, distrito y nivel de análisis.
+3. **Relación histórica** (`fuerzas_relaciones`): continuidad, cambio de
+   nombre, escisión, fusión, integración de alianza o composición documentada
+   entre identidades. La composición describe componentes y no reemplaza por
+   sí sola la identidad del indicador.
+4. **Bloque** (`bloques_electorales` y `bloque_miembros`): agrupación
+   documentada para un escenario de comparación, sin fusionar identidades.
 
-Las reglas con año explícito tienen prioridad sobre las generales. La
-normalización de tildes, mayúsculas, guiones y espacios se usa para encontrar
-coincidencias, pero el nombre canónico se conserva. La aplicación se hace en
-tiempo de consulta: los datos crudos no se reescriben.
+Cada fila guarda `fuente`, `confianza` y `estado` (`validada`, `provisoria` o
+`pendiente`). Las reglas `pendiente` no se aplican. Las `provisoria` se
+muestran con advertencia, pero **no** modifican el indicador principal. Las
+relaciones y bloques solo se aplican en sus escenarios y únicamente si están
+`validada`.
 
-Desde la barra lateral o la pestaña **Homologación** se puede editar, agregar
-identidades para fuerzas faltantes, importar un CSV o descargar la tabla.
+Escenarios disponibles en la barra lateral:
+
+- **Estricto**: compara denominaciones sin seguir continuidades históricas.
+- **Relaciones**: aplica continuidades, cambios de nombre, fusiones y
+  escisiones validadas.
+- **Bloques**: además agrupa a los miembros de bloques validados.
+
+La tabla heredada `homologacion_fuerzas` y
+`data/homologacion_partidos.csv` se mantienen intactas por compatibilidad. Se
+siguen aplicando como fallback para nombres que no tengan denominación nueva y
+para no romper las descargas existentes. La migración importa las reglas
+básicas, pero no las usa para inventar relaciones históricas.
+
+La interfaz administrativa permite editar identidades, denominaciones,
+relaciones, bloques, ausencias y revisar conflictos, fuerzas sin homologar y
+duplicados de importación. Los visitantes solo ven resultados e indicadores;
+no pueden escribir en la base.
 
 ---
 
@@ -343,8 +382,25 @@ script observa el scroll del documento padre y aplica `position: sticky; top:
 dock. Los contenedores intermedios de Streamlit usan `display: contents` para
 que el sticky tenga como bloque contenedor toda la página.
 
-Paleta: azules eléctrico/federal, cabecera blanca, texto grafito y cinta azul
-profundo. Sin amarillo. El logo usa un SVG del Congreso de la Nación.
+La identidad visual usa la paleta institucional violeta:
+
+| Token | Color | Uso |
+| --- | --- | --- |
+| Violeta oscuro | `#4C1D95` | cabecera, énfasis y texto institucional |
+| Violeta principal | `#7C3AED` | acciones, gráficos y acentos |
+| Lila | `#C084FC` | series secundarias y detalles |
+| Amarillo | `#FFD600` | cinta inferior, foco y palabras destacadas |
+| Lavanda | `#F8F5FF` | fondo general |
+| Grafito | `#241238` | texto principal |
+| Blanco | `#FFFFFF` | tarjetas y tablas |
+
+La cabecera aplica el degradado
+`linear-gradient(120deg, #4C1D95 0%, #7C3AED 55%, #C084FC 100%)`, un logo SVG
+del Congreso un 50 % más grande (`105 px` en escritorio) y una cinta amarilla
+inferior. Las tarjetas de indicadores, el panel lateral, las pestañas y los
+gráficos comparten la misma paleta. El diseño se adapta a escritorio, tableta y
+celular, con menú lateral, pestañas desplazables y tablas legibles. El acceso
+administrativo sigue visible solo después de autenticarse.
 
 ---
 
@@ -356,7 +412,10 @@ profundo. Sin amarillo. El logo usa un SVG del Congreso de la Nación.
 2. Elegí `app.py` como archivo principal.
 3. Cargá `ADMIN_PASSWORD_HASH` y `GROQ_API_KEY` en **Secrets**.
 4. La base SQLite es efímera; al reiniciar se reconstruye desde
-   `data/seed_resultados.csv` y `data/homologacion_partidos.csv`.
+   `data/seed_resultados.csv`, `data/homologacion_partidos.csv` y las semillas
+   históricas `data/identidades_fuerzas.csv`, `data/denominaciones_fuerzas.csv`,
+   `data/relaciones_historicas.csv`, `data/bloques_electorales.csv`,
+   `data/bloque_miembros.csv` y `data/ausencias_verificadas.csv`.
 5. La contraseña administrativa nunca se guarda en el repositorio: sólo su
    hash en Secrets.
 
@@ -378,6 +437,29 @@ docker run --rm -p 8501:8501 -e GROQ_API_KEY=... agora-electoral
 
 El `Dockerfile` incluye un healthcheck en `/_stcore/health`.
 
+### Migración y respaldo de SQLite
+
+La aplicación aplica la migración al arrancar, antes de cargar resultados. La
+migración crea las tablas del modelo histórico, canonicaliza claves
+territoriales, deduplica resultados y registra los descartes en
+`registros_auditoria`. Es idempotente y no depende de que una tabla esté vacía.
+
+Para ejecutarla manualmente sobre una base existente:
+
+```bash
+python -m agora.migraciones --db observatorio.db
+```
+
+Antes de escribir, se crea una copia con la API de respaldo de SQLite en
+`backups/`, junto a la base migrada. Para una migración de prueba sin respaldo:
+
+```bash
+python -m agora.migraciones --db copia.db --sin-respaldo
+```
+
+La migración **no** elimina duplicados conflictivos: conserva una fila
+determinista y deja el conflicto en auditoría con `requiere_revision = 1`.
+
 ---
 
 ## 9. Pruebas
@@ -398,11 +480,24 @@ Cobertura actual de la suite:
 - Pedersen con nuevas/extintas, supervivencia y NEP;
 - comparación con fuerza nueva y conservación de votos;
 - homologación por año, tildes, guardado/carga y fuerzas faltantes;
+- homologación histórica con casos obligatorios (Juntos por La Rioja, Vamos,
+  Unidos, Juntos por el Cambio, Frente de Todos, Unión por la Patria, FIT-U y
+  variantes ortográficas);
+- relaciones y bloques provisionales que no se aplican, y validados que sí se
+  aplican solo en su escenario;
+- normalización `LA_RIOJA`/`LA RIOJA` con trazabilidad del valor original;
+- deduplicación exacta, conflictos marcados para revisión, migración
+  idempotente y respaldo;
+- ausencia verificada por cobertura completa frente a dato faltante no imputado;
+- reinicio de la aplicación con la base ya migrada;
 - hash PBKDF2, comparación segura y rechazo de escrituras administrativas
   cuando la sesión es pública;
 - login correcto, login incorrecto, cierre de sesión y controles ocultos para
   visitantes en AppTest;
 - prompt, secciones del informe, Groq primero, Ollama local y fallback a reglas;
+- identidad visual violeta, logo ampliado (105 px), tema de Streamlit, puntos de
+  quiebre responsive y dependencias mínimas para Cloud;
+- panel administrativo de homologación histórica con sus siete pestañas;
 - higiene de rutas absolutas y orden de `setup_page()`.
 
 Además se ejecutaron verificaciones de integración:
@@ -413,9 +508,13 @@ Además se ejecutaron verificaciones de integración:
   178.151 votos positivos y fuente original almacenada;
 - navegador headless (Chrome CDP): carga de dos planillas, importación,
   comparación, Pedersen y dictamen; botones de descarga renderizados;
-- navegador headless (Firefox/Playwright): ocho pestañas sin excepciones, sin
-  desborde horizontal en escritorio ni móvil, cabecera `70/38/16 px`, versión
-  compacta `42/25 px` y logo móvil `52 px`;
+- verificación estática de la cabecera violeta, el degradado institucional,
+  el logo de `105 px` y los puntos de quiebre responsive de `1000`, `760` y
+  `520 px`;
+- navegador headless Chromium/Playwright: degradado violeta, título blanco y
+  amarillo, logo de `105 px`, ocho pestañas, pestaña activa violeta, nueve
+  tarjetas de indicadores y cero excepciones; sin desborde horizontal en
+  escritorio ni en móvil (logo móvil de `66 px` y metadatos ocultos);
 - cabecera sticky: `position: sticky`, `top: 0`, compactación, logo centrado
   sobre el dock, sin solapamiento y función de limpieza;
 - servidor mock compatible con la API de Groq para verificar el camino de red,
@@ -440,11 +539,16 @@ cuenta y devolvía HTTP 404; por eso se actualizó el valor por defecto.
   individuales ni intención de voto.
 - La calidad de la comparación depende de la homologación. Una alianza que
   cambió de composición puede requerir reglas por año y una nota explicativa.
-- Una ausencia de registro no equivale automáticamente a extinción; por eso la
-  mitigación es explícita y se puede desactivar para auditar.
+  Las relaciones y bloques sin fuente primaria suficiente quedan
+  **provisorios** y no se aplican al indicador principal.
+- Una ausencia de registro no equivale automáticamente a extinción ni a
+  `0,0%`; solo se imputa con cobertura comparable completa o una ausencia
+  explícita validada. En caso contrario el indicador se informa como parcial.
+- Los escenarios estricto, de relaciones y de bloques pueden dar resultados
+  distintos. La interfaz muestra cuál se está usando; no se deben mezclar.
 - Las proyecciones 2027 son escenarios de trabajo, no pronósticos.
 - En hosting gratuito sin volumen, la base SQLite no persiste entre reinicios;
-  la semilla y la tabla de homologación sí están versionadas en `data/`.
+  la semilla, las reglas y el modelo histórico sí están versionados en `data/`.
 
 ---
 
@@ -458,9 +562,11 @@ cuenta y devolvía HTTP 404; por eso se actualizó el valor por defecto.
   `openai/gpt-oss-120b` y fallback determinista cuando falta la clave o la
   respuesta no respeta la estructura.
 - Arranque limpio: verificado con `venv` nuevo y dependencias instaladas desde
-  `requirements.txt`; **43 pruebas automatizadas OK** (incluye acceso público,
-  login, logout y rechazo de escrituras administrativas) y semilla
-  reconstruida.
-- Navegación final: ocho pestañas y sección de carga verificadas en Chrome
-  headless y Firefox/Playwright, sin excepciones, con datos de semilla y con
-  comparación 2023→2025.
+  `requirements.txt`; **70 pruebas automatizadas OK** (incluye acceso público,
+  login, logout, rechazo de escrituras administrativas, identidad visual,
+  caché de homologación y empaquetado para Cloud) y semilla reconstruida.
+- Navegación final: ocho pestañas y sección de carga verificadas con
+  `AppTest` de Streamlit, sin excepciones, con datos de semilla y comparación
+  2023→2025.
+- Arranque HTTP local: `/_stcore/health` respondió `200` con una base nueva y
+  sin secretos de producción.

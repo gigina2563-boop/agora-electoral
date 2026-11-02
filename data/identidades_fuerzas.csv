@@ -1,0 +1,15 @@
+nombre,nivel,tipo,estado,fuente,confianza,notas
+COMPROMISO FEDERAL,alianza,Alianza,pendiente,Fuente primaria pendiente (Justicia Electoral de La Rioja),baja,Etiqueta 2019. No se encontró documentación suficiente para afirmar continuidad o composición.
+DEMÓCRATA CRISTIANO,partido,Partido,validada,Normalización ortográfica de la planilla electoral,alta,Identidad estable para las variantes con y sin tildes.
+FRENTE DE IZQUIERDA Y DE TRABAJADORES - UNIDAD,alianza,Alianza,validada,Planilla electoral y denominación oficial de la alianza,alta,Se conserva el sufijo - UNIDAD. Las variantes abreviadas o con error de tipeo se registran como denominaciones.
+FRENTE DE TODOS,alianza,Alianza,validada,Planilla electoral,alta,Etiqueta 2019 y 2021. La relación con Unión por la Patria queda provisional.
+HACEMOS POR NUESTRO PAÍS,alianza,Alianza,validada,Planilla electoral,alta,Etiqueta de la alianza.
+HACEMOS POR NUESTRO PAÍS - PARTIDO DEMÓCRATA CRISTIANO,alianza,Alianza,validada,Planilla electoral,media,Etiqueta 2023. Composición y relación con Hacemos por Nuestro País y el Partido Demócrata Cristiano pendientes de fuente primaria.
+JUNTOS POR EL CAMBIO,alianza,Alianza,validada,Planilla electoral,alta,Etiqueta 2023. La continuidad con Juntos por La Rioja y Vamos La Rioja queda provisional.
+JUNTOS POR LA RIOJA,alianza,Alianza,validada,Planilla electoral,alta,Etiqueta 2019. Se corrige el error de tipeo JUNTOS PORLA RIOJA mediante una denominación explícita.
+LA LIBERTAD AVANZA,partido,Partido,validada,Planilla electoral,alta,Identidad 2023.
+PROYECTO JOVEN,partido,Partido,validada,Planilla electoral,alta,Identidad 2023.
+UNIDOS,alianza,Alianza,validada,Planilla electoral,alta,Etiqueta 2021. Se mantiene como identidad separada; no se fusiona con UCD ni con Vamos La Rioja.
+UNIÓN DEL CENTRO DEMOCRÁTICO,partido,Partido,validada,Normalización ortográfica de la planilla electoral,alta,Identidad estable para las variantes con y sin tildes.
+UNIÓN POR LA PATRIA,alianza,Alianza,validada,Planilla electoral,alta,Etiqueta 2023. La relación con Frente de Todos queda provisional.
+VAMOS LA RIOJA,alianza,Alianza,validada,Planilla electoral,alta,Etiqueta 2021.
