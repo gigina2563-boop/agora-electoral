@@ -10,6 +10,8 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import sqlite3
+from contextlib import closing
 from typing import Any, Iterable, Optional
 
 import pandas as pd
@@ -30,6 +32,7 @@ from .config import (
     APP_VERSION,
     PALETA,
     config,
+    get_db_path,
     ollama_habilitado,
 )
 from .header import render_header
@@ -44,6 +47,35 @@ from .homologacion import (
     guardar_homologacion,
     sembrar_identidades,
 )
+from .homologacion_historica import (
+    COLUMNAS_AUSENCIAS,
+    COLUMNAS_BLOQUE_MIEMBROS,
+    COLUMNAS_BLOQUES,
+    COLUMNAS_DENOMINACIONES,
+    COLUMNAS_IDENTIDADES,
+    COLUMNAS_RELACIONES,
+    CONFIANZAS,
+    ESCENARIOS,
+    ESTADOS,
+    NIVELES,
+    TIPOS_RELACION,
+    aplicar_homologacion_historica,
+    ausencias_verificadas as ausencias_verificadas_modelo,
+    cargar_modelo_historico,
+    diagnosticar_homologacion,
+    guardar_ausencias,
+    guardar_bloque_miembros,
+    guardar_bloques,
+    guardar_denominaciones,
+    guardar_identidades,
+    guardar_relaciones,
+    resumen_modelo,
+)
+from .integridad import (
+    filas_auditoria_para_revision,
+    resumen_auditoria,
+)
+from .migraciones import aplicar_migraciones
 from .ingest import (
     asegurar_db_sembrada,
     cargar_datos_db,
@@ -61,6 +93,7 @@ from .metrics import (
     calcular_nep,
     construir_comparacion,
     serie_agregada,
+    validar_comparacion,
 )
 from .utils import (
     escapar_html,
@@ -88,12 +121,12 @@ PESTANAS = [
 ]
 
 COLORES_SERIE = [
-    "#1d4ed8",
-    "#0284c7",
-    "#0ea5e9",
-    "#475569",
-    "#64748b",
-    "#94a3b8",
+    "#4c1d95",
+    "#7c3aed",
+    "#c084fc",
+    "#ffd600",
+    "#a78bfa",
+    "#241238",
 ]
 
 
@@ -122,6 +155,11 @@ def _hero(eyebrow: str, titulo: str, subtitulo: str) -> None:
           <span class="agora-eyebrow">{escapar_html(eyebrow)}</span>
           <h1>{escapar_html(titulo)}</h1>
           <p>{escapar_html(subtitulo)}</p>
+          <div class="agora-hero-badges" aria-label="Atributos del observatorio">
+            <span>Datos abiertos</span>
+            <span>Indicadores verificables</span>
+            <span>La Rioja · Argentina</span>
+          </div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -893,6 +931,8 @@ def _render_sidebar(
     datos: pd.DataFrame,
     datos_crudos: pd.DataFrame,
     homologacion: pd.DataFrame,
+    modelo_historico: Any,
+    escenario_actual: str,
 ) -> dict[str, Any]:
     modelo_ollama = config("OLLAMA_MODEL", "gemma3:1b") or "gemma3:1b"
     cargo_sel: Optional[str] = None
@@ -910,6 +950,23 @@ def _render_sidebar(
             </div>
             """,
             unsafe_allow_html=True,
+        )
+
+        escenario = st.selectbox(
+            "Escenario de comparación histórica",
+            list(ESCENARIOS),
+            index=list(ESCENARIOS).index(escenario_actual)
+            if escenario_actual in ESCENARIOS
+            else 0,
+            format_func=lambda clave: ESCENARIOS.get(clave, clave),
+            key="agora_escenario_homologacion",
+            help=(
+                "Estricto: cada identidad conserva su nombre electoral. "
+                "Relaciones: aplica continuidades, cambios de nombre, fusiones "
+                "e integraciones validadas; la composición no se usa para "
+                "reemplazar identidades. Bloques: agrupa solo bloques "
+                "documentados y validados en administración."
+            ),
         )
 
         if not datos.empty and {"cargo", "anio", "distrito"}.issubset(
@@ -971,15 +1028,15 @@ def _render_sidebar(
                         key=f"agora_distrito::{cargo_sel}::{anio_actual}",
                     )
                     ausencias_son_cero = st.checkbox(
-                        "Mitigar sesgo de supervivencia (0,0% a fuerzas "
-                        "nuevas o extintas)",
+                        "Mitigar solo ausencias verificadas (0,0%)",
                         value=True,
                         key="agora_ausencias_cero",
                         help=(
-                            "Asigna 0,0% a las fuerzas ausentes en uno de los "
-                            "dos períodos. Es el criterio metodológico del "
-                            "observatorio. Desactivalo solo si la ausencia "
-                            "puede ser un dato faltante."
+                            "Asigna 0,0% únicamente cuando la fuerza no se "
+                            "presentó y la cobertura de la elección permite "
+                            "afirmarlo, o cuando existe una ausencia validada "
+                            "en administración. Una ausencia sin dato no se "
+                            "completa con cero: el indicador queda parcial."
                         ),
                     )
         else:
@@ -996,10 +1053,13 @@ def _render_sidebar(
             '<div class="agora-side-label">Calidad de datos</div>',
             unsafe_allow_html=True,
         )
-        sin_mapear = fuerzas_sin_mapear(datos_crudos, homologacion)
+        diagnostico = diagnosticar_homologacion(
+            datos_crudos, modelo_historico, escenario, homologacion
+        )
+        sin_mapear = diagnostico["sin_denominacion"]
         if sin_mapear:
             st.warning(
-                f"{len(sin_mapear)} fuerza(s) sin regla de homologación."
+                f"{len(sin_mapear)} fuerza(s) sin denominación histórica."
             )
             with st.expander("Ver fuerzas pendientes"):
                 for nombre in sin_mapear[:20]:
@@ -1007,11 +1067,50 @@ def _render_sidebar(
                 if len(sin_mapear) > 20:
                     st.caption(f"… y {len(sin_mapear) - 20} más.")
         else:
+            resumen = resumen_modelo(modelo_historico)
             st.caption(
-                f"{len(homologacion)} reglas activas. Todas las fuerzas "
-                "visibles tienen cobertura."
+                f"{resumen['denominaciones']} denominaciones y "
+                f"{resumen['relaciones']} relaciones históricas. "
+                "Todas las fuerzas visibles tienen cobertura."
+            )
+        conflictos_totales = (
+            len(diagnostico["conflictos_denominaciones"])
+            + len(diagnostico.get("conflictos_relaciones", []))
+            + len(diagnostico.get("conflictos_bloques", []))
+        )
+        if conflictos_totales:
+            st.error(
+                f"{conflictos_totales} conflicto(s) de reglas históricas."
+            )
+        if diagnostico.get("fuerzas_provisorias"):
+            st.info(
+                f"{diagnostico['fuerzas_provisorias']} fuerza(s) usan una "
+                "denominación o regla provisoria."
+            )
+        if diagnostico.get("fuerzas_pendientes"):
+            st.warning(
+                f"{diagnostico['fuerzas_pendientes']} fuerza(s) tienen una "
+                "denominación pendiente y no se aplican al indicador."
+            )
+        relaciones_provisorias = len(
+            diagnostico.get("relaciones_provisorias", [])
+        )
+        bloques_provisorios = len(diagnostico.get("bloques_provisorios", []))
+        if relaciones_provisorias or bloques_provisorios:
+            st.caption(
+                f"{relaciones_provisorias} relación(es) y "
+                f"{bloques_provisorios} bloque(s) históricos no están "
+                "validados y no se aplican al indicador principal. Se pueden "
+                "revisar en administración."
             )
         if es_admin():
+            if st.button(
+                "Homologación histórica",
+                width="stretch",
+                key="agora_btn_abrir_homologacion_historica",
+            ):
+                st.session_state["agora_homologacion_historica_abierta"] = True
+                st.rerun()
             if st.button(
                 "Editar homologación",
                 width="stretch",
@@ -1035,6 +1134,12 @@ def _render_sidebar(
         "datos": datos,
         "datos_crudos": datos_crudos,
         "homologacion": homologacion,
+        "modelo_historico": modelo_historico,
+        "escenario": escenario,
+        "diagnostico": diagnostico,
+        "ausencias_verificadas": ausencias_verificadas_modelo(
+            modelo_historico
+        ),
         "cargo": cargo_sel,
         "anio_actual": anio_actual,
         "anio_base": anio_base,
@@ -1156,6 +1261,480 @@ def _dialogo_homologacion(
                 st.error(f"No se pudo importar: {error}")
 
 
+@st.dialog("Homologación histórica", width="large")
+def _dialogo_homologacion_historica(
+    datos_crudos: pd.DataFrame, modelo: Any
+) -> None:
+    if not es_admin():
+        st.error(
+            "La edición de la homologación histórica requiere una sesión de "
+            "administradora."
+        )
+        return
+
+    st.markdown(
+        "Este modelo separa **identidad estable**, **denominación electoral** "
+        "y **relación histórica**. Una coincidencia de nombres no alcanza "
+        "para unificar fuerzas: toda continuidad, fusión o bloque necesita "
+        "fuente, confianza y estado. Lo provisorio no se aplica al indicador "
+        "principal."
+    )
+    escenario = str(
+        st.session_state.get("agora_escenario_homologacion", "estricto")
+    )
+    diagnostico = diagnosticar_homologacion(
+        datos_crudos,
+        modelo,
+        escenario,
+        cargar_homologacion(),
+    )
+    resumen = resumen_modelo(modelo)
+
+    st.markdown(
+        f"""
+        <div class="agora-model-strip">
+          <div class="agora-model-card">
+            <span>Identidades</span>
+            <strong>{resumen['identidades']}</strong>
+            <small>nombres estables de comparación</small>
+          </div>
+          <div class="agora-model-card">
+            <span>Denominaciones</span>
+            <strong>{resumen['denominaciones']}</strong>
+            <small>nombres electorales por contexto</small>
+          </div>
+          <div class="agora-model-card">
+            <span>Relaciones</span>
+            <strong>{resumen['relaciones']}</strong>
+            <small>{resumen['relaciones_validadas']} validadas</small>
+          </div>
+          <div class="agora-model-card">
+            <span>Pendientes</span>
+            <strong>{diagnostico['fuerzas_sin_homologar'] + diagnostico.get('fuerzas_pendientes', 0)}</strong>
+            <small>fuerzas por revisar</small>
+          </div>
+        </div>
+        <div class="agora-legend" aria-label="Estados de validación">
+          <span class="validada">Validada · se aplica</span>
+          <span class="provisoria">Provisoria · requiere fuente</span>
+          <span class="pendiente">Pendiente · no se aplica</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    tabs = st.tabs(
+        [
+            "Cobertura",
+            "Identidades",
+            "Denominaciones",
+            "Relaciones",
+            "Bloques",
+            "Ausencias",
+            "Conflictos y duplicados",
+        ]
+    )
+
+    with tabs[0]:
+        columnas = st.columns(4)
+        columnas[0].metric("Identidades", resumen["identidades"])
+        columnas[1].metric("Denominaciones", resumen["denominaciones"])
+        columnas[2].metric("Relaciones", resumen["relaciones"])
+        columnas[3].metric(
+            "Pendientes de homologar",
+            diagnostico["fuerzas_sin_homologar"]
+            + diagnostico.get("fuerzas_pendientes", 0),
+        )
+        st.caption(
+            f"Escenario activo: **{ESCENARIOS.get(escenario, escenario)}** · "
+            f"{resumen['relaciones_validadas']} relaciones validadas · "
+            f"{resumen['bloques']} bloques."
+        )
+        if diagnostico["sin_denominacion"]:
+            st.warning(
+                "Fuerzas sin denominación histórica: "
+                + ", ".join(diagnostico["sin_denominacion"])
+            )
+        if diagnostico.get("fuerzas_pendientes"):
+            st.warning(
+                f"{diagnostico['fuerzas_pendientes']} fuerza(s) tienen una "
+                "denominación pendiente y no se aplican al indicador."
+            )
+        if diagnostico["conflictos_denominaciones"]:
+            st.error("\n".join(diagnostico["conflictos_denominaciones"]))
+        if diagnostico.get("conflictos_relaciones"):
+            st.error("\n".join(diagnostico["conflictos_relaciones"]))
+        if diagnostico.get("conflictos_bloques"):
+            st.error("\n".join(diagnostico["conflictos_bloques"]))
+        if not diagnostico["provisorias"].empty:
+            st.info(
+                "Hay filas con denominación o regla provisoria. Se muestran "
+                "para revisión, pero las relaciones y bloques provisorios no "
+                "se aplican al indicador principal."
+            )
+            st.dataframe(
+                diagnostico["provisorias"][
+                    [
+                        "fuerza_denominacion",
+                        "fuerza_identidad",
+                        "estado_homologacion",
+                        "fuente_homologacion",
+                    ]
+                ].drop_duplicates(),
+                hide_index=True,
+                width="stretch",
+            )
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {"estado": estado, "filas": cantidad}
+                    for estado, cantidad in diagnostico["por_estado"].items()
+                ]
+            ),
+            hide_index=True,
+            width="stretch",
+        )
+
+    with tabs[1]:
+        st.caption(
+            "La identidad es el nombre estable que se usa para comparar. "
+            "No cambies una identidad para 'corregir' una continuidad: eso se "
+            "registra en Relaciones."
+        )
+        identidades = modelo.identidades.drop(
+            columns=["id", "creado_en"], errors="ignore"
+        )
+        editadas = st.data_editor(
+            identidades,
+            num_rows="dynamic",
+            hide_index=True,
+            width="stretch",
+            key="agora_editor_identidades",
+            column_config={
+                "nombre": st.column_config.TextColumn(
+                    "Identidad", required=True, width="medium"
+                ),
+                "nivel": st.column_config.SelectboxColumn(
+                    "Nivel", options=NIVELES, required=True
+                ),
+                "tipo": st.column_config.TextColumn("Tipo"),
+                "estado": st.column_config.SelectboxColumn(
+                    "Estado", options=ESTADOS, required=True
+                ),
+                "fuente": st.column_config.TextColumn("Fuente", width="medium"),
+                "confianza": st.column_config.SelectboxColumn(
+                    "Confianza", options=CONFIANZAS
+                ),
+                "notas": st.column_config.TextColumn("Notas", width="large"),
+            },
+        )
+        if st.button("Guardar identidades", type="primary", width="stretch"):
+            try:
+                cantidad = guardar_identidades(editadas)
+                st.success(f"Guardadas {cantidad} identidades.")
+                st.rerun()
+            except Exception as error:  # noqa: BLE001
+                st.error(f"No se pudieron guardar: {error}")
+
+    with tabs[2]:
+        st.caption(
+            "Una fila por nombre electoral observado. Años vacíos significan "
+            "que la denominación aplica a todo el período; conviene acotarla "
+            "cuando la fuente lo permita."
+        )
+        denominaciones = modelo.denominaciones.drop(
+            columns=[
+                "id",
+                "nombre_clave",
+                "cargo_clave",
+                "distrito_clave",
+                "creado_en",
+            ],
+            errors="ignore",
+        )
+        editadas = st.data_editor(
+            denominaciones,
+            num_rows="dynamic",
+            hide_index=True,
+            width="stretch",
+            key="agora_editor_denominaciones",
+            column_config={
+                "identidad": st.column_config.TextColumn(
+                    "Identidad", required=True, width="medium"
+                ),
+                "nombre_electoral": st.column_config.TextColumn(
+                    "Nombre electoral", required=True, width="medium"
+                ),
+                "anio_desde": st.column_config.NumberColumn(
+                    "Desde", min_value=1900, max_value=2100, step=1, format="%d"
+                ),
+                "anio_hasta": st.column_config.NumberColumn(
+                    "Hasta", min_value=1900, max_value=2100, step=1, format="%d"
+                ),
+                "tipo_eleccion": st.column_config.TextColumn("Tipo de elección"),
+                "cargo": st.column_config.TextColumn("Cargo"),
+                "distrito": st.column_config.TextColumn("Distrito"),
+                "nivel": st.column_config.SelectboxColumn(
+                    "Nivel", options=NIVELES
+                ),
+                "estado": st.column_config.SelectboxColumn(
+                    "Estado", options=ESTADOS, required=True
+                ),
+                "fuente": st.column_config.TextColumn("Fuente", width="medium"),
+                "confianza": st.column_config.SelectboxColumn(
+                    "Confianza", options=CONFIANZAS
+                ),
+                "notas": st.column_config.TextColumn("Notas", width="large"),
+            },
+        )
+        if st.button("Guardar denominaciones", type="primary", width="stretch"):
+            try:
+                cantidad = guardar_denominaciones(editadas)
+                st.success(f"Guardadas {cantidad} denominaciones.")
+                st.rerun()
+            except Exception as error:  # noqa: BLE001
+                st.error(f"No se pudieron guardar: {error}")
+
+    with tabs[3]:
+        st.caption(
+            "Solo las relaciones **validadas** se aplican en el escenario de "
+            "relaciones. Las provisorias quedan documentadas para revisión."
+        )
+        relaciones = modelo.relaciones.drop(
+            columns=["id", "cargo_clave", "distrito_clave", "creado_en"],
+            errors="ignore",
+        )
+        editadas = st.data_editor(
+            relaciones,
+            num_rows="dynamic",
+            hide_index=True,
+            width="stretch",
+            key="agora_editor_relaciones",
+            column_config={
+                "origen": st.column_config.TextColumn(
+                    "Origen", required=True, width="medium"
+                ),
+                "destino": st.column_config.TextColumn(
+                    "Destino", required=True, width="medium"
+                ),
+                "tipo_relacion": st.column_config.SelectboxColumn(
+                    "Tipo", options=TIPOS_RELACION, required=True
+                ),
+                "anio_desde": st.column_config.NumberColumn(
+                    "Desde", min_value=1900, max_value=2100, step=1, format="%d"
+                ),
+                "anio_hasta": st.column_config.NumberColumn(
+                    "Hasta", min_value=1900, max_value=2100, step=1, format="%d"
+                ),
+                "cargo": st.column_config.TextColumn("Cargo"),
+                "distrito": st.column_config.TextColumn("Distrito"),
+                "nivel": st.column_config.SelectboxColumn(
+                    "Nivel", options=NIVELES
+                ),
+                "estado": st.column_config.SelectboxColumn(
+                    "Estado", options=ESTADOS, required=True
+                ),
+                "fuente": st.column_config.TextColumn("Fuente", width="medium"),
+                "confianza": st.column_config.SelectboxColumn(
+                    "Confianza", options=CONFIANZAS
+                ),
+                "notas": st.column_config.TextColumn("Notas", width="large"),
+            },
+        )
+        if st.button("Guardar relaciones", type="primary", width="stretch"):
+            try:
+                cantidad = guardar_relaciones(editadas)
+                st.success(f"Guardadas {cantidad} relaciones.")
+                st.rerun()
+            except Exception as error:  # noqa: BLE001
+                st.error(f"No se pudieron guardar: {error}")
+
+    with tabs[4]:
+        st.caption(
+            "Los bloques solo se aplican en el escenario de bloques y solo si "
+            "el bloque y la membresía están validados."
+        )
+        bloques = modelo.bloques.drop(columns=["id", "creado_en"], errors="ignore")
+        editados = st.data_editor(
+            bloques,
+            num_rows="dynamic",
+            hide_index=True,
+            width="stretch",
+            key="agora_editor_bloques",
+            column_config={
+                "nombre": st.column_config.TextColumn(
+                    "Bloque", required=True, width="medium"
+                ),
+                "nivel": st.column_config.SelectboxColumn(
+                    "Nivel", options=NIVELES
+                ),
+                "estado": st.column_config.SelectboxColumn(
+                    "Estado", options=ESTADOS, required=True
+                ),
+                "fuente": st.column_config.TextColumn("Fuente", width="medium"),
+                "confianza": st.column_config.SelectboxColumn(
+                    "Confianza", options=CONFIANZAS
+                ),
+                "notas": st.column_config.TextColumn("Notas", width="large"),
+            },
+        )
+        if st.button("Guardar bloques", type="primary", width="stretch"):
+            try:
+                cantidad = guardar_bloques(editados)
+                st.success(f"Guardados {cantidad} bloques.")
+                st.rerun()
+            except Exception as error:  # noqa: BLE001
+                st.error(f"No se pudieron guardar: {error}")
+
+        st.divider()
+        miembros = modelo.bloque_miembros.drop(
+            columns=["id", "creado_en"], errors="ignore"
+        )
+        editados = st.data_editor(
+            miembros,
+            num_rows="dynamic",
+            hide_index=True,
+            width="stretch",
+            key="agora_editor_bloque_miembros",
+            column_config={
+                "bloque": st.column_config.TextColumn(
+                    "Bloque", required=True, width="medium"
+                ),
+                "identidad": st.column_config.TextColumn(
+                    "Identidad", required=True, width="medium"
+                ),
+                "anio_desde": st.column_config.NumberColumn(
+                    "Desde", min_value=1900, max_value=2100, step=1, format="%d"
+                ),
+                "anio_hasta": st.column_config.NumberColumn(
+                    "Hasta", min_value=1900, max_value=2100, step=1, format="%d"
+                ),
+                "estado": st.column_config.SelectboxColumn(
+                    "Estado", options=ESTADOS, required=True
+                ),
+                "fuente": st.column_config.TextColumn("Fuente", width="medium"),
+                "confianza": st.column_config.SelectboxColumn(
+                    "Confianza", options=CONFIANZAS
+                ),
+                "notas": st.column_config.TextColumn("Notas", width="large"),
+            },
+        )
+        if st.button(
+            "Guardar miembros de bloque", type="primary", width="stretch"
+        ):
+            try:
+                cantidad = guardar_bloque_miembros(editados)
+                st.success(f"Guardados {cantidad} miembros.")
+                st.rerun()
+            except Exception as error:  # noqa: BLE001
+                st.error(f"No se pudieron guardar: {error}")
+
+    with tabs[5]:
+        st.caption(
+            "Una ausencia solo se completa con cero si está validada acá o si "
+            "la cobertura completa de circuitos permite verificarla."
+        )
+        ausencias = modelo.ausencias.drop(
+            columns=["id", "cargo_clave", "distrito_clave", "creado_en"],
+            errors="ignore",
+        )
+        editadas = st.data_editor(
+            ausencias,
+            num_rows="dynamic",
+            hide_index=True,
+            width="stretch",
+            key="agora_editor_ausencias",
+            column_config={
+                "anio": st.column_config.NumberColumn(
+                    "Año", min_value=1900, max_value=2100, step=1, format="%d"
+                ),
+                "cargo": st.column_config.TextColumn("Cargo", required=True),
+                "distrito": st.column_config.TextColumn(
+                    "Distrito", required=True
+                ),
+                "identidad": st.column_config.TextColumn(
+                    "Identidad", required=True, width="medium"
+                ),
+                "motivo": st.column_config.TextColumn("Motivo"),
+                "estado": st.column_config.SelectboxColumn(
+                    "Estado", options=ESTADOS, required=True
+                ),
+                "fuente": st.column_config.TextColumn("Fuente", width="medium"),
+                "confianza": st.column_config.SelectboxColumn(
+                    "Confianza", options=CONFIANZAS
+                ),
+                "notas": st.column_config.TextColumn("Notas", width="large"),
+            },
+        )
+        if st.button("Guardar ausencias", type="primary", width="stretch"):
+            try:
+                cantidad = guardar_ausencias(editadas)
+                st.success(f"Guardadas {cantidad} ausencias.")
+                st.rerun()
+            except Exception as error:  # noqa: BLE001
+                st.error(f"No se pudieron guardar: {error}")
+
+    with tabs[6]:
+        st.markdown("**Conflictos de reglas históricas**")
+        if diagnostico["conflictos_denominaciones"]:
+            for conflicto in diagnostico["conflictos_denominaciones"]:
+                st.error(conflicto)
+        else:
+            st.success("No hay denominaciones contradictorias en el modelo.")
+        st.markdown("**Relaciones y bloques provisorios**")
+        st.write(
+            f"{len(diagnostico['relaciones_provisorias'])} relaciones y "
+            f"{len(diagnostico['bloques_provisorios'])} bloques no se aplican "
+            "al indicador principal."
+        )
+        if not diagnostico["relaciones_provisorias"].empty:
+            st.dataframe(
+                diagnostico["relaciones_provisorias"][
+                    ["origen", "destino", "tipo_relacion", "estado", "fuente"]
+                ],
+                hide_index=True,
+                width="stretch",
+            )
+        st.markdown("**Duplicados y conflictos de importación**")
+        try:
+            with closing(sqlite3.connect(get_db_path())) as conexion:
+                resumen_auditoria_db = resumen_auditoria(conexion)
+                revision = filas_auditoria_para_revision(conexion, limite=200)
+                duplicados = pd.read_sql_query(
+                    """
+                    SELECT anio, distrito, circuito, cargo, fuerza,
+                           votos_positivos, porcentaje, estado, detalle
+                    FROM registros_auditoria
+                    WHERE estado = 'duplicado_exacto'
+                    ORDER BY anio, distrito, circuito, cargo, fuerza
+                    LIMIT 200
+                    """,
+                    conexion,
+                )
+            st.json(resumen_auditoria_db)
+            if revision.empty:
+                st.success("No hay filas pendientes de revisión.")
+            else:
+                st.dataframe(revision, hide_index=True, width="stretch")
+            st.markdown("**Duplicados exactos retirados (muestra)**")
+            if duplicados.empty:
+                st.caption("No hay duplicados exactos registrados.")
+            else:
+                st.dataframe(duplicados, hide_index=True, width="stretch")
+                st.caption(
+                    f"Se muestran {len(duplicados)} de "
+                    f"{resumen_auditoria_db.get('duplicado_exacto', 0)} "
+                    "filas duplicadas. La planilla original sigue guardada "
+                    "en `planillas_fuentes`."
+                )
+        except Exception as error:  # noqa: BLE001
+            st.warning(f"No se pudo leer la auditoría: {error}")
+
+    if st.button("Cerrar", width="stretch"):
+        st.session_state["agora_homologacion_historica_abierta"] = False
+        st.rerun()
+
+
 def _render_homologacion_block(
     datos_crudos: pd.DataFrame,
     homologacion: pd.DataFrame,
@@ -1163,29 +1742,51 @@ def _render_homologacion_block(
     anio_base: int | None,
     anio_actual: int,
     distrito: str,
+    modelo_historico: Any,
 ) -> None:
     st.markdown(
-        "La homologación define qué denominaciones se consideran la misma "
-        "fuerza. Sin esta armonización, un cambio de nombre o de alianza "
-        "puede inflar artificialmente Pedersen y distorsionar la "
-        "supervivencia partidaria."
+        "La **homologación histórica** define qué denominaciones electorales "
+        "pertenecen a una misma identidad y qué continuidades están "
+        "documentadas. La tabla básica de la izquierda se conserva por "
+        "compatibilidad, pero no alcanza para distinguir un cambio de nombre "
+        "de una fuerza nueva."
     )
-    sin_mapear = fuerzas_sin_mapear(datos_crudos, homologacion)
+    diagnostico = diagnosticar_homologacion(
+        datos_crudos,
+        modelo_historico,
+        str(st.session_state.get("agora_escenario_homologacion", "estricto")),
+        homologacion,
+    )
+    sin_mapear = diagnostico["sin_denominacion"]
     if sin_mapear:
-        st.warning("Fuerzas sin regla: " + ", ".join(sin_mapear[:10]))
+        st.warning("Fuerzas sin denominación: " + ", ".join(sin_mapear[:10]))
     else:
         st.success(
-            "Todas las fuerzas del conjunto analizado tienen una regla."
+            "Todas las fuerzas del conjunto analizado tienen una regla "
+            "registrada."
         )
+    if diagnostico.get("fuerzas_pendientes"):
+        st.warning(
+            f"{diagnostico['fuerzas_pendientes']} fuerza(s) tienen una "
+            "denominación pendiente y no se aplican al indicador."
+        )
+    if es_admin() and st.button(
+        "Abrir homologación histórica",
+        key="agora_btn_homologacion_historica_tab",
+    ):
+        st.session_state["agora_homologacion_historica_abierta"] = True
+        st.rerun()
 
-    met1, met2 = st.columns([1, 3])
-    with met1:
-        st.metric("Reglas de homologación", str(len(homologacion)))
-    with met2:
-        st.caption(
-            "Las reglas con año explícito tienen prioridad. Los datos crudos "
-            "no se reescriben: la homologación se aplica en la consulta."
-        )
+    resumen = resumen_modelo(modelo_historico)
+    met1, met2, met3 = st.columns(3)
+    met1.metric("Denominaciones", resumen["denominaciones"])
+    met2.metric("Relaciones validadas", resumen["relaciones_validadas"])
+    met3.metric("Reglas básicas", len(homologacion))
+    st.caption(
+        "El escenario de comparación se elige en la barra lateral. Solo las "
+        "relaciones y los bloques con estado **validada** se aplican al "
+        "indicador principal; los datos crudos no se reescriben."
+    )
 
     st.dataframe(
         homologacion,
@@ -1367,6 +1968,15 @@ def _construir_estado(filtros: dict[str, Any]) -> dict[str, Any]:
     )
     distrito = str(filtros["distrito"])
     ausencias = bool(filtros["ausencias_son_cero"])
+    ausencias_validadas = filtros.get("ausencias_verificadas", set())
+    comparabilidad = validar_comparacion(
+        datos, anio_base, anio_actual, cargo, distrito
+    ) if anio_base is not None else {
+        "comparable": False,
+        "advertencias": [],
+        "cobertura_base": set(),
+        "cobertura_actual": set(),
+    }
 
     corte_actual = datos[
         datos["cargo"].astype(str).eq(cargo)
@@ -1420,6 +2030,7 @@ def _construir_estado(filtros: dict[str, Any]) -> dict[str, Any]:
         "detalle_pedersen": pd.DataFrame(),
         "resumen_supervivencia": {},
         "detalle_supervivencia": pd.DataFrame(),
+        "comparabilidad": comparabilidad,
         "historico": _serie_historica(datos, cargo, distrito),
     }
 
@@ -1431,6 +2042,7 @@ def _construir_estado(filtros: dict[str, Any]) -> dict[str, Any]:
             cargo,
             distrito,
             ausencias_son_cero=ausencias,
+            ausencias_verificadas=ausencias_validadas,
         )
         if not comparacion.empty:
             tabla_fuerzas = agregar_por_fuerza(comparacion)
@@ -1473,6 +2085,32 @@ def _render_tab_inicio(
         ),
     )
 
+    st.markdown(
+        """
+        <div class="agora-onboard">
+          <div class="agora-card">
+            <span class="num">01 · DATOS</span>
+            <h3>Resultados y territorio</h3>
+            <p>Explorá la participación por fuerza, distrito y circuito, con
+            descargas reproducibles y trazabilidad de la planilla original.</p>
+          </div>
+          <div class="agora-card">
+            <span class="num">02 · MÉTODO</span>
+            <h3>Pedersen y NEP</h3>
+            <p>Medí desplazamiento neto, fragmentación y supervivencia con
+            advertencias explícitas cuando la comparación es parcial.</p>
+          </div>
+          <div class="agora-card">
+            <span class="num">03 · HOMOLOGACIÓN</span>
+            <h3>Comparación auditable</h3>
+            <p>Identidades, denominaciones, relaciones y bloques documentados.
+            Las relaciones provisorias no se presentan como validadas.</p>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     columnas = st.columns(4)
     columnas[0].metric("Elecciones cargadas", str(cobertura["elecciones"]))
     columnas[1].metric("Fuerzas en el corte", str(cobertura["fuerzas"]))
@@ -1509,6 +2147,14 @@ def _render_tab_inicio(
         </div>
         """
         st.markdown(panorama, unsafe_allow_html=True)
+        if resumen.get("pedersen_parcial") or not estado[
+            "comparabilidad"
+        ].get("comparable", True):
+            st.warning(
+                "El indicador es parcial: hay fuerzas sin dato o la cobertura "
+                "territorial no es idéntica. No se completaron ausencias no "
+                "verificadas con cero."
+            )
         st.caption(
             f"Cobertura: {anios} · {cargo} · "
             f"{'Todos los distritos' if distrito == 'Todos' else distrito}."
@@ -1584,12 +2230,19 @@ def _render_tab_resultados(
     datos_crudos = filtros["datos_crudos"]
     homologacion = filtros["homologacion"]
 
-    sin_mapear = fuerzas_sin_mapear(datos_crudos, homologacion)
+    diagnostico = filtros.get("diagnostico", {})
+    sin_mapear = diagnostico.get("sin_denominacion", [])
     if sin_mapear:
         st.warning(
-            "Hay fuerzas sin regla de homologación. Una variante de nombre "
-            "podría computarse como fuerza distinta. Revisá la pestaña "
-            "**Análisis territorial → Homologación**."
+            f"Hay {len(sin_mapear)} fuerza(s) sin denominación histórica. "
+            "Una variante de nombre podría computarse como fuerza distinta. "
+            "Revisá **Análisis territorial → Homologación histórica**."
+        )
+    if filtros.get("escenario") != "estricto":
+        st.caption(
+            "Escenario aplicado: "
+            f"**{ESCENARIOS.get(filtros.get('escenario'), filtros.get('escenario'))}**. "
+            "Solo se aplican relaciones y bloques con estado validada."
         )
 
     if estado["modo"] == "comparacion":
@@ -1653,7 +2306,7 @@ def _render_tab_resultados(
             )
             st.bar_chart(
                 pivote,
-                color=["#94a3b8", PALETA["azul"]],
+                color=[PALETA["lila"], PALETA["violeta"]],
                 height=390,
                 width="stretch",
             )
@@ -2027,6 +2680,7 @@ def _render_tab_territorial(
             anio_base,
             anio_actual,
             distrito,
+            filtros["modelo_historico"],
         )
 
 
@@ -2076,6 +2730,10 @@ def _render_tab_pedersen(
             "individuales de votos."
         ),
     )
+    comparabilidad = estado.get("comparabilidad", {})
+    if not comparabilidad.get("comparable", True):
+        for advertencia in comparabilidad.get("advertencias", []):
+            st.warning(advertencia)
 
     col_metrica, col_lectura = st.columns([1, 2])
     with col_metrica:
@@ -2106,7 +2764,9 @@ def _render_tab_pedersen(
         if detalle["incompleto"].any():
             st.warning(
                 "El índice es parcial: hay fuerzas sin datos en uno de los "
-                "períodos. Activá la mitigación para computarlas con 0,0%."
+                "períodos. Solo se completa con 0,0% una ausencia verificada. "
+                "Revisá la cobertura territorial y las ausencias cargadas en "
+                "administración."
             )
         st.subheader("Aporte de cada fuerza al índice")
         aporte = (
@@ -2356,6 +3016,14 @@ def _render_tab_sistema_partidos(
         actual = serie_agregada(comparacion, "pct_actual", "votos_actual")
         nep_base = calcular_nep(base)
         nep_actual = calcular_nep(actual)
+        incompleto_nep = bool(
+            comparacion[["pct_base", "pct_actual"]].isna().any().any()
+        )
+        if incompleto_nep:
+            st.warning(
+                "El NEP comparado es parcial: hay fuerzas sin dato en alguno "
+                "de los períodos. No se imputó cero sin verificación."
+            )
         st.subheader("Cambio entre elecciones comparables")
         columnas = st.columns(2)
         columnas[0].metric(
@@ -2369,8 +3037,9 @@ def _render_tab_sistema_partidos(
             f"{len(actual)} agrupaciones",
         )
         st.caption(
-            "Ambos NEP se calculan con la misma categoría y territorio. Las "
-            "fuerzas ausentes se incorporan según la opción de mitigación."
+            "Ambos NEP se calculan con la misma categoría y territorio. Solo "
+            "se incorporan ausencias verificadas; las faltantes dejan el "
+            "indicador comparado como parcial."
         )
 
     st.markdown(
@@ -2821,16 +3490,33 @@ def _render_dashboard(filtros: dict[str, Any]) -> None:
         _render_tab_metodologia(filtros, estado)
 
     st.markdown(
-        """
+        f"""
         <div class="agora-footer">
           <strong>Ágora Electoral</strong> · Observatorio Electoral de La
-          Rioja. Indicadores descriptivos: Pedersen mide desplazamiento neto
-          de votos, no transferencias individuales. La prospectiva 2027 es un
-          escenario de trabajo, no un pronóstico.
+          Rioja · versión {escapar_html(APP_VERSION)}. Indicadores
+          descriptivos: Pedersen mide desplazamiento neto de votos, no
+          transferencias individuales. La prospectiva 2027 es un escenario de
+          trabajo, no un pronóstico.
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+
+_MIGRACIONES_APLICADAS: set[str] = set()
+
+
+def _migrar_al_arranque() -> None:
+    """Ejecuta la migración una vez por proceso y ruta de base.
+
+    Streamlit reejecuta el script en cada interacción. La migración es segura
+    pero no hace falta repetir la importación de semillas en cada rerun.
+    """
+    ruta = os.path.abspath(get_db_path())
+    if ruta in _MIGRACIONES_APLICADAS:
+        return
+    aplicar_migraciones(ruta, respaldar=True, sembrar=True)
+    _MIGRACIONES_APLICADAS.add(ruta)
 
 
 def main() -> None:
@@ -2839,6 +3525,9 @@ def main() -> None:
 
     error_semilla: Exception | None = None
     try:
+        # La migración crea el modelo histórico, reconstruye la tabla de
+        # resultados con claves internas y respalda la base antes de escribir.
+        _migrar_al_arranque()
         asegurar_db_sembrada()
         asegurar_homologacion_sembrada()
     except Exception as error:  # noqa: BLE001 - se informa en la interfaz
@@ -2846,7 +3535,18 @@ def main() -> None:
 
     datos_crudos = cargar_datos_db()
     homologacion = cargar_homologacion()
-    datos = aplicar_homologacion(datos_crudos, homologacion)
+    try:
+        modelo_historico = cargar_modelo_historico()
+    except Exception:  # noqa: BLE001 - la consulta pública sigue disponible
+        from .homologacion_historica import ModeloHistorico
+
+        modelo_historico = ModeloHistorico.vacio()
+    escenario = str(
+        st.session_state.get("agora_escenario_homologacion", "estricto")
+    )
+    datos = aplicar_homologacion_historica(
+        datos_crudos, modelo_historico, escenario, homologacion
+    )
 
     if es_admin():
         _render_carga_planillas(not datos.empty)
@@ -2857,7 +3557,9 @@ def main() -> None:
                 )
             )
 
-    filtros = _render_sidebar(datos, datos_crudos, homologacion)
+    filtros = _render_sidebar(
+        datos, datos_crudos, homologacion, modelo_historico, escenario
+    )
 
     if error_semilla is not None:
         st.warning(
@@ -2870,6 +3572,10 @@ def main() -> None:
 
     if es_admin() and st.session_state.get("agora_homologacion_abierta"):
         _dialogo_homologacion(datos_crudos, homologacion)
+    if es_admin() and st.session_state.get(
+        "agora_homologacion_historica_abierta"
+    ):
+        _dialogo_homologacion_historica(datos_crudos, modelo_historico)
 
     if filtros["datos"].empty:
         _render_tabs_vacio()

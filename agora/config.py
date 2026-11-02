@@ -14,12 +14,18 @@ from typing import Any, Optional
 
 import streamlit as st
 
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DATOS_DIR = os.path.join(BASE_DIR, "datos")
 SEED_RESULTADOS = os.path.join(DATA_DIR, "seed_resultados.csv")
 SEED_HOMOLOGACION = os.path.join(DATA_DIR, "homologacion_partidos.csv")
+SEED_IDENTIDADES = os.path.join(DATA_DIR, "identidades_fuerzas.csv")
+SEED_DENOMINACIONES = os.path.join(DATA_DIR, "denominaciones_fuerzas.csv")
+SEED_RELACIONES = os.path.join(DATA_DIR, "relaciones_historicas.csv")
+SEED_BLOQUES = os.path.join(DATA_DIR, "bloques_electorales.csv")
+SEED_BLOQUE_MIEMBROS = os.path.join(DATA_DIR, "bloque_miembros.csv")
+SEED_AUSENCIAS = os.path.join(DATA_DIR, "ausencias_verificadas.csv")
 
 EXTENSIONES_PLANILLA = (".csv", ".xls", ".xlsx", ".xlsm")
 COLUMNAS_SALIDA = [
@@ -90,13 +96,22 @@ ALIAS_FUERZA = {
 }
 
 PALETA = {
-    "azul": "#2563eb",
-    "azul_oscuro": "#1d4ed8",
-    "celeste": "#0284c7",
-    "azul_profundo": "#1e40af",
-    "grafito": "#0f172a",
-    "borde": "#e2e8f0",
-    "fondo": "#f8fafc",
+    # Nombres heredados conservados por compatibilidad; los valores siguen
+    # la identidad visual violeta del observatorio.
+    "azul": "#7c3aed",
+    "azul_oscuro": "#4c1d95",
+    "celeste": "#c084fc",
+    "azul_profundo": "#4c1d95",
+    "grafito": "#241238",
+    "borde": "#e9ddf9",
+    "fondo": "#f8f5ff",
+    # Tokens explícitos de la paleta institucional.
+    "violeta_oscuro": "#4c1d95",
+    "violeta": "#7c3aed",
+    "lila": "#c084fc",
+    "amarillo": "#ffd600",
+    "lavanda": "#f8f5ff",
+    "blanco": "#ffffff",
 }
 
 

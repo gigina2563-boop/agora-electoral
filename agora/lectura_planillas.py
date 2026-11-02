@@ -21,6 +21,7 @@ from typing import Any, Optional
 import pandas as pd
 
 from .config import CLAVE_ELECTORAL, COLUMNAS_SALIDA
+from .integridad import normalizar_resultados
 from .utils import (
     clave_fuerza,
     decodificar,
@@ -1336,32 +1337,9 @@ def _normalizar_tabla(
         calculado = (tabla["votos_positivos"] / totales * 100).round(4)
         tabla.loc[por_calcular, "porcentaje"] = calculado[por_calcular]
 
-    duplicadas = tabla.duplicated(CLAVE_ELECTORAL, keep=False)
-    if duplicadas.any():
-        # Repetir exactamente la misma fila no debe duplicar votos; dos
-        # valores distintos para la misma clave sí son un conflicto.
-        conflicto = False
-        for _, grupo in tabla.loc[duplicadas].groupby(
-            CLAVE_ELECTORAL, dropna=False
-        ):
-            votos = grupo["votos_positivos"].dropna().unique()
-            pct = grupo["porcentaje"].dropna().unique()
-            if len(votos) > 1 or len(pct) > 1:
-                conflicto = True
-                break
-        if conflicto:
-            ejemplos = (
-                tabla.loc[duplicadas, CLAVE_ELECTORAL]
-                .head(3)
-                .to_dict("records")
-            )
-            raise ValueError(
-                "Hay datos contradictorios para la misma clave (año, "
-                "distrito, circuito, cargo y fuerza). Ejemplos: "
-                f"{ejemplos}"
-            )
-        tabla = tabla.drop_duplicates(CLAVE_ELECTORAL, keep="first")
-
+    # La deduplicación y la auditoría de conflictos se hacen una sola vez al
+    # final de ``_normalizar_con_inspeccion``, para no perder filas antes de
+    # poder registrarlas en ``registros_auditoria``.
     return (
         tabla[COLUMNAS_SALIDA]
         .sort_values(CLAVE_ELECTORAL)
@@ -1465,36 +1443,13 @@ def _normalizar_con_inspeccion(
     except Exception as error:  # pragma: no cover - defensivo
         raise ValueError("No pude unir las hojas normalizadas.") from error
 
-    duplicadas = datos.duplicated(CLAVE_ELECTORAL, keep=False)
-    if duplicadas.any():
-        conflicto = False
-        for _, grupo in datos.loc[duplicadas].groupby(
-            CLAVE_ELECTORAL, dropna=False
-        ):
-            if grupo["votos_positivos"].dropna().nunique() > 1:
-                conflicto = True
-                break
-            if grupo["porcentaje"].dropna().nunique() > 1:
-                conflicto = True
-                break
-        if conflicto:
-            ejemplos = (
-                datos.loc[duplicadas, CLAVE_ELECTORAL]
-                .head(3)
-                .to_dict("records")
-            )
-            raise ValueError(
-                "Las hojas contienen datos contradictorios para la misma "
-                f"clave. Ejemplos: {ejemplos}"
-            )
-        datos = datos.drop_duplicates(CLAVE_ELECTORAL, keep="first")
-
-    return (
-        datos[COLUMNAS_SALIDA]
-        .sort_values(CLAVE_ELECTORAL)
-        .reset_index(drop=True),
-        inspeccion,
-    )
+    datos, auditoria = normalizar_resultados(datos)
+    datos = datos.sort_values(
+        ["anio", "distrito_clave", "circuito", "cargo", "fuerza_clave"]
+    ).reset_index(drop=True)
+    datos.attrs["auditoria"] = auditoria
+    datos.attrs["archivo"] = nombre_fuente(fuente)
+    return datos, inspeccion
 
 
 def normalizar_planilla(
@@ -1503,4 +1458,4 @@ def normalizar_planilla(
 ) -> pd.DataFrame:
     """Convierte CSV/XLS/XLSX en el esquema interno del observatorio."""
     datos, _ = _normalizar_con_inspeccion(fuente, opciones)
-    return datos
+    return datos.reindex(columns=COLUMNAS_SALIDA).reset_index(drop=True)
