@@ -1447,7 +1447,10 @@ def _normalizar_con_inspeccion(
     datos = datos.sort_values(
         ["anio", "distrito_clave", "circuito", "cargo", "fuerza_clave"]
     ).reset_index(drop=True)
-    datos.attrs["auditoria"] = auditoria
+    # ``attrs`` se compara al concatenar DataFrames. Guardar un DataFrame acá
+    # hace que pandas intente evaluar su verdad y falle con "The truth value of
+    # a DataFrame is ambiguous" al importar más de una planilla a la vez.
+    datos.attrs["auditoria"] = auditoria.to_dict(orient="records")
     datos.attrs["archivo"] = nombre_fuente(fuente)
     return datos, inspeccion
 

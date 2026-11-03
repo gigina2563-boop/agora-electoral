@@ -14,7 +14,7 @@ from typing import Any, Optional
 
 import streamlit as st
 
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.2.1"
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 DATOS_DIR = os.path.join(BASE_DIR, "datos")

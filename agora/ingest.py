@@ -200,8 +200,10 @@ def _persistir_fuentes_en_db(
         datos["fuente_huella"] = huella
         datos["archivo"] = archivo
         auditoria = datos.attrs.get("auditoria")
-        if isinstance(auditoria, pd.DataFrame) and not auditoria.empty:
-            auditoria = auditoria.copy()
+        if isinstance(auditoria, pd.DataFrame):
+            auditoria = auditoria.to_dict(orient="records")
+        if auditoria:
+            auditoria = pd.DataFrame(auditoria)
             auditoria["huella_fuente"] = huella
             auditoria["archivo"] = archivo
             auditorias.append(auditoria)

@@ -322,6 +322,17 @@ class IngestaTests(BaseTemporal):
         self.assertEqual(resumen["bloques"][0]["fila_encabezado"], 1)
         self.assertEqual(resumen["bloques"][0]["mapeo"]["fuerza"], "fuerza")
 
+    def test_guarda_varias_planillas_en_una_importacion(self) -> None:
+        contenido = (
+            "anio,distrito,circuito,cargo,fuerza,votos_positivos,porcentaje\n"
+            "2023,C,C1,P,A,60,60\n2023,C,C1,P,B,40,40\n"
+        ).encode("utf-8")
+        filas = ingest.guardar_fuentes_en_db(
+            [io.BytesIO(contenido), io.BytesIO(contenido)]
+        )
+        self.assertEqual(filas, 2)
+        self.assertEqual(len(ingest.cargar_datos_db()), 2)
+
     def test_semilla_construye_base(self) -> None:
         with patch.dict(os.environ, {"AGORA_SEED": "1"}):
             sembrada = ingest.asegurar_db_sembrada()

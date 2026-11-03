@@ -55,7 +55,7 @@ class IdentidadVisualTests(unittest.TestCase):
 
         from agora.config import APP_VERSION, PALETA
 
-        self.assertEqual(APP_VERSION, "2.2.0")
+        self.assertEqual(APP_VERSION, "2.2.1")
         self.assertEqual(PALETA["violeta_oscuro"], "#4c1d95")
         self.assertEqual(PALETA["amarillo"], "#ffd600")
 
