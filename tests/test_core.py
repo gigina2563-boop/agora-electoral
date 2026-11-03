@@ -340,6 +340,7 @@ class IngestaTests(BaseTemporal):
         datos = ingest.cargar_datos_db()
         self.assertGreater(len(datos), 1000)
         self.assertIn(2023, datos["anio"].unique().tolist())
+        self.assertIn(2021, datos["anio"].unique().tolist())
 
 
 class MetricasTests(BaseTemporal):
