@@ -133,9 +133,14 @@ La app tiene dos modalidades en la misma sesión de Streamlit:
 - **Visitante público:** entra sin registrarse y puede consultar resultados,
   gráficos, indicadores, metodología y descargar los CSV públicos. No ve el
   formulario de carga ni el editor de homologación.
-- **Administradora:** abre **Acceso administrador** en el panel lateral,
-  ingresa la contraseña y habilita la carga, validación, importación local y
-  edición de homologación. El botón **Cerrar sesión** vuelve al modo público.
+- **Administradora:** abre **Acceso administrador** en el panel lateral o en
+  la tarjeta del cuerpo principal, ingresa la contraseña y habilita la carga,
+  validación, importación local y edición de homologación. El botón
+  **Cerrar sesión** vuelve al modo público.
+
+El acceso también está disponible en el cuerpo principal para que no dependa de
+que el panel lateral esté desplegado; ambos formularios comparten la misma
+sesión y el mismo estado administrativo.
 
 La autorización no depende de ocultar botones. `guardar_fuentes_en_db()` y
 `guardar_homologacion()` comprueban la sesión en Python y lanzan

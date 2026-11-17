@@ -302,6 +302,89 @@ def _serie_historica(
 # ---------------------------------------------------------------------------
 
 
+_ORIGEN_LOGIN_KEY = "agora_login_origen"
+
+
+def _abrir_login(origen: str) -> None:
+    """Abre el formulario de acceso en el panel lateral o en el cuerpo."""
+    st.session_state["agora_login_abierto"] = True
+    st.session_state[_ORIGEN_LOGIN_KEY] = origen
+    st.rerun()
+
+
+_CLAVES_SESION_ADMIN = (
+    "agora_homologacion_abierta",
+    "agora_mostrar_importacion",
+    "agora_mensaje_importacion",
+    "agora_firma_importada",
+    "agora_upload_planillas",
+    "agora_upload_homologacion",
+    "agora_editor_homologacion",
+    "agora_dictamen",
+    "agora_dictamen_clave",
+    _ORIGEN_LOGIN_KEY,
+)
+
+
+def _cerrar_sesion_admin() -> None:
+    """Cierra la sesión y descarta el estado administrativo de la interfaz."""
+    cerrar_sesion()
+    for clave in _CLAVES_SESION_ADMIN:
+        st.session_state.pop(clave, None)
+    st.rerun()
+
+
+def _render_form_login(origen: str, contenedor: Any = None) -> bool:
+    """Formulario compartido por el panel lateral y el cuerpo principal.
+
+    Devuelve ``True`` si la autenticación fue exitosa. Cuando se renderiza en
+    el cuerpo, el formulario se retira con ``contenedor.empty()`` y se evita el
+    rerun para que Streamlit no deje el formulario anterior en pantalla.
+    """
+    exito = False
+    cancelado = False
+    with st.form(f"agora_admin_login_{origen}", clear_on_submit=True):
+        password = st.text_input(
+            "Contraseña",
+            type="password",
+            key="agora_admin_password",
+            autocomplete="current-password",
+        )
+        col_ingresar, col_cancelar = st.columns(2)
+        with col_ingresar:
+            ingresar = st.form_submit_button(
+                "Ingresar",
+                type="primary",
+                width="stretch",
+            )
+        with col_cancelar:
+            cancelar = st.form_submit_button(
+                "Cancelar",
+                width="stretch",
+            )
+        if ingresar:
+            autenticada, mensaje = iniciar_sesion(password or "")
+            if autenticada:
+                exito = True
+                st.session_state["agora_login_abierto"] = False
+                st.session_state.pop(_ORIGEN_LOGIN_KEY, None)
+                st.session_state.pop("agora_admin_password", None)
+            else:
+                st.error(mensaje)
+        if cancelar:
+            cancelado = True
+            st.session_state["agora_login_abierto"] = False
+            st.session_state.pop(_ORIGEN_LOGIN_KEY, None)
+            st.session_state.pop("agora_admin_password", None)
+
+    if contenedor is not None:
+        if exito or cancelado:
+            contenedor.empty()
+    elif exito or cancelado:
+        st.rerun()
+    return exito
+
+
 def _render_acceso_admin() -> None:
     """Bloque de acceso en la parte superior del panel lateral."""
     with st.sidebar:
@@ -323,20 +406,7 @@ def _render_acceso_admin() -> None:
                 width="stretch",
                 key="agora_btn_cerrar_sesion",
             ):
-                cerrar_sesion()
-                for clave in (
-                    "agora_homologacion_abierta",
-                    "agora_mostrar_importacion",
-                    "agora_mensaje_importacion",
-                    "agora_firma_importada",
-                    "agora_upload_planillas",
-                    "agora_upload_homologacion",
-                    "agora_editor_homologacion",
-                    "agora_dictamen",
-                    "agora_dictamen_clave",
-                ):
-                    st.session_state.pop(clave, None)
-                st.rerun()
+                _cerrar_sesion_admin()
             st.divider()
             return
 
@@ -363,8 +433,7 @@ def _render_acceso_admin() -> None:
                 width="stretch",
                 key="agora_btn_abrir_login",
             ):
-                st.session_state["agora_login_abierto"] = True
-                st.rerun()
+                _abrir_login("sidebar")
             st.caption(
                 "Consultá resultados sin registrarte. La edición de datos "
                 "requiere contraseña."
@@ -372,38 +441,83 @@ def _render_acceso_admin() -> None:
             st.divider()
             return
 
-        with st.form("agora_admin_login", clear_on_submit=True):
-            password = st.text_input(
-                "Contraseña",
-                type="password",
-                key="agora_admin_password",
-                autocomplete="current-password",
+        if st.session_state.get(_ORIGEN_LOGIN_KEY) == "principal":
+            st.caption(
+                "El formulario de acceso está abierto en la página principal."
             )
-            col_ingresar, col_cancelar = st.columns(2)
-            with col_ingresar:
-                ingresar = st.form_submit_button(
-                    "Ingresar",
-                    type="primary",
-                    width="stretch",
-                )
-            with col_cancelar:
-                cancelar = st.form_submit_button(
-                    "Cancelar",
-                    width="stretch",
-                )
-            if ingresar:
-                autenticada, mensaje = iniciar_sesion(password or "")
-                if autenticada:
-                    st.session_state["agora_login_abierto"] = False
-                    st.session_state.pop("agora_admin_password", None)
-                    st.rerun()
-                else:
-                    st.error(mensaje)
-            if cancelar:
-                st.session_state["agora_login_abierto"] = False
-                st.session_state.pop("agora_admin_password", None)
-                st.rerun()
+        else:
+            _render_form_login("sidebar")
         st.divider()
+
+
+def _render_tarjeta_sesion_principal() -> None:
+    """Tarjeta de sesión activa en el cuerpo principal."""
+    with st.container(border=True, key="agora_acceso_principal_sesion"):
+        col_info, col_accion = st.columns(
+            [3, 1], vertical_alignment="center"
+        )
+        with col_info:
+            st.markdown("**Sesión de administradora activa**")
+            st.caption("Carga, validación y homologación habilitadas.")
+        with col_accion:
+            if st.button(
+                "Cerrar sesión",
+                key="agora_btn_cerrar_sesion_principal",
+                width="stretch",
+            ):
+                _cerrar_sesion_admin()
+
+
+def _render_tarjeta_acceso_principal() -> None:
+    """Tarjeta con el botón de acceso en el cuerpo principal."""
+    with st.container(border=True, key="agora_acceso_principal_anonimo"):
+        col_info, col_accion = st.columns(
+            [3, 1], vertical_alignment="center"
+        )
+        with col_info:
+            st.markdown("**Acceso administrador**")
+            st.caption(
+                "Cargá planillas y editá la homologación. La consulta "
+                "pública sigue disponible sin contraseña."
+            )
+        with col_accion:
+            if st.button(
+                "Acceso administrador",
+                key="agora_btn_abrir_login_principal",
+                width="stretch",
+            ):
+                _abrir_login("principal")
+
+
+def _render_acceso_admin_principal() -> None:
+    """Acceso de respaldo en el cuerpo, visible con el panel lateral cerrado."""
+    if not admin_configurada():
+        return
+
+    if es_admin():
+        _render_tarjeta_sesion_principal()
+        return
+
+    if not st.session_state.get("agora_login_abierto"):
+        _render_tarjeta_acceso_principal()
+        return
+
+    if st.session_state.get(_ORIGEN_LOGIN_KEY) != "principal":
+        return
+
+    marcador = st.empty()
+    with marcador.container():
+        st.markdown("**Acceso administrador**")
+        st.caption(
+            "Ingresá la contraseña para habilitar la carga y la edición "
+            "de datos."
+        )
+        exito = _render_form_login("principal", marcador)
+
+    if exito:
+        _render_tarjeta_sesion_principal()
+    elif not st.session_state.get("agora_login_abierto"):
+        _render_tarjeta_acceso_principal()
 
 
 # ---------------------------------------------------------------------------
@@ -3521,6 +3635,9 @@ def _migrar_al_arranque() -> None:
 
 def main() -> None:
     render_header()
+    # El acceso del cuerpo se procesa antes que el del panel lateral para que
+    # ambos reflejen la misma sesión en el mismo rerun.
+    _render_acceso_admin_principal()
     _render_acceso_admin()
 
     error_semilla: Exception | None = None
